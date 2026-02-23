@@ -29,12 +29,15 @@ anyhow = "1.0"
 log    = "0.4"
 env_logger = "0.10"
 
+# -------------------------------------------------------------
+# FEATURES
+# -------------------------------------------------------------
 [features]
-# -----------------------------------------------------------------
-# Features activés par défaut (celui‑ci sera utilisé si aucune
-# feature explicite n’est passée à `cargo build`).
-# -----------------------------------------------------------------
-default = ["vulkan", "opengl"]   # convenable pour Linux et pour les builds généraux
+# Features activés par défaut (ceux‑ci seront utilisés si vous ne
+# précisez aucune feature explicite). Ils correspondent aux builds
+# généraux (Linux, macOS, Windows) où le backend Metal n’est pas
+# requis.
+default = ["vulkan", "opengl"]   # bon pour Linux et pour les builds « généraux »
 
 # Backend Vulkan (requiert la crate `ash`)
 vulkan = ["ash"]
