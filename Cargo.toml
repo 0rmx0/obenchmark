@@ -1,0 +1,39 @@
+[package]
+name = "performance_test"
+version = "0.1.0"
+edition = "2021"
+authors = ["Votre Nom <votre.email@example.com>"]
+description = "Benchmark multi‑plateforme (CPU, RAM, DISK, GPU) en Rust + eGUI"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# GUI
+eframe = { version = "0.27", features = ["glow"] }   # eGUI + OpenGL backend
+egui   = "0.27"
+
+# GPU backends (optionnels selon la plateforme)
+ash    = { version = "0.38", optional = true }      # Vulkan
+metal  = { version = "0.24", optional = true }      # Metal (macOS uniquement)
+windows = { version = "0.52", optional = true }     # DirectX12 (Windows)
+glutin = { version = "0.31", optional = true }      # OpenGL (fallback)
+
+# Sérialisation / export
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Parallelisation (facultatif mais recommandé)
+rayon = "1.9"
+
+# Utilitaires
+anyhow = "1.0"
+log    = "0.4"
+env_logger = "0.10"
+
+[features]
+# Les features activées par défaut lors d’un simple `cargo build`
+default = ["vulkan", "opengl"]
+
+vulkan = ["ash"]
+metal  = ["metal"]
+dx12   = ["windows"]
+opengl = ["glutin"]
