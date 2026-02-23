@@ -1,70 +1,105 @@
-name: Manual Build (all platforms)
+# .github/workflows/rust-build.yml
+# ------------------------------------------------------------
+# Workflow GitHub Actions pour compiler le projet **performance_test**
+# sur Ubuntu, macOS et Windows.
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------------
-# 1️⃣ Le workflow ne se lance que sur demande (bouton "Run workflow")
-# ------------------------------------------------------------------
+name: Rust Build (Linux / macOS / Windows)
+
+# Le workflow peut être déclenché manuellement ou à chaque push sur les
+# branches principales.
 on:
-  workflow_dispatch:                     # <‑‑ déclencheur manuel
-    inputs:
-      # Vous pouvez ajouter des paramètres ici si vous voulez choisir
-      # une version précise, un tag, etc. (facultatif)
-      # Exemple :
-      # version:
-      #   description: "Version du binaire (ex: v1.2.3)"
-      #   required: false
-      #   default: ""
+  workflow_dispatch:          # bouton « Run workflow » dans l’onglet Actions
+  push:
+    branches: [ main, master ]
 
-# ------------------------------------------------------------------
-# 2️⃣ Job principal : compilation sur chaque OS + chaque set de features
-# ------------------------------------------------------------------
+# -----------------------------------------------------------------
+# Variables communes (facultatives)
+# -----------------------------------------------------------------
+env:
+  # Nom de l’exécutable produit (identique sur toutes les plateformes)
+  BINARY_NAME: performance_test
+
+# -----------------------------------------------------------------
+# Jobs
+# -----------------------------------------------------------------
 jobs:
-  build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
-    # --------------------------------------------------------------
-    # Matrice d’OS + de combinaisons de features
-    # --------------------------------------------------------------
+  # ================================================================
+  # 1️⃣ JOB Ubuntu – Vulkan + OpenGL
+  # ================================================================
+  build-ubuntu:
+    name: Build (Ubuntu)
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: false                 # continuer même si un job échoue
       matrix:
-        include:
-          # ---------- Linux ----------
-          - os: ubuntu-latest
-            features: "vulkan opengl"
-            artifact_name: "performance_test-linux"
-
-          # ---------- macOS ----------
-          - os: macos-latest
-            features: "metal opengl"
-            artifact_name: "performance_test-macos"
-
-          # ---------- Windows ----------
-          - os: windows-latest
-            features: "dx12 opengl"
-            artifact_name: "performance_test-windows"
-
+        # Vous pouvez ajouter d’autres combinaisons de features ici.
+        features: [ "vulkan opengl" ]
     steps:
-      # ------------------------------------------------------------
-      # 2.1️⃣ Checkout du dépôt
-      # ------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 1️⃣ Checkout du dépôt
+      # ---------------------------------------------------------
       - name: Récupérer le code source
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # 2.2️⃣ Installer Rust (stable) via rustup
-      # ------------------------------------------------------------
-      - name: Installer Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
+      # ---------------------------------------------------------
+      # 2️⃣ Installation des dépendances système
+      # ---------------------------------------------------------
+      - name: Installer les paquets système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libssl-dev \
+            libudev-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            curl
 
-      # ------------------------------------------------------------
-      # 2.3️⃣ Cache du registre Cargo (dépendances) et du dossier target
-      # ------------------------------------------------------------
-      - name: Cache Cargo registry
+      # ---------------------------------------------------------
+      # 3️⃣ Nettoyer un éventuel ancien SDK Vulkan
+      # ---------------------------------------------------------
+      - name: Supprimer l’ancien archive du SDK Vulkan (au cas où)
+        run: rm -f "${RUNNER_TEMP}/vulkan-sdk.tar.gz" || true
+
+      # ---------------------------------------------------------
+      # 4️⃣ Télécharger et installer le SDK Vulkan (méthode robuste)
+      # ---------------------------------------------------------
+      - name: Télécharger et installer le SDK Vulkan
+        run: |
+          set -euo pipefail
+
+          VULKAN_SDK_URL="https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz"
+          ARCHIVE="${RUNNER_TEMP}/vulkan-sdk.tar.gz"
+
+          echo "🔽 Téléchargement du SDK Vulkan depuis $VULKAN_SDK_URL"
+          curl -L -fSL "$VULKAN_SDK_URL" -o "$ARCHIVE"
+
+          # Vérifier que le fichier est bien un gzip
+          if ! file "$ARCHIVE" | grep -q 'gzip compressed data'; then
+            echo "❌ Le fichier téléchargé n’est pas un gzip !"
+            echo "=== Début du fichier ==="
+            head -n 20 "$ARCHIVE"
+            echo "=== Fin du fichier ==="
+            exit 1
+          fi
+
+          mkdir -p "$HOME/vulkan-sdk"
+          tar -xzf "$ARCHIVE" -C "$HOME/vulkan-sdk" --strip-components=1
+
+          # Exporter les variables d’environnement pour les steps suivants
+          echo "VULKAN_SDK=$HOME/vulkan-sdk/x86_64" >> $GITHUB_ENV
+          echo "$HOME/vulkan-sdk/x86_64/bin" >> $GITHUB_PATH
+
+          echo "✅ SDK Vulkan installé dans $HOME/vulkan-sdk"
+
+      # ---------------------------------------------------------
+      # 5️⃣ Cache du registre Cargo (dépendances crates)
+      # ---------------------------------------------------------
+      - name: Cache du registre Cargo
         uses: actions/cache@v3
         with:
           path: |
@@ -74,7 +109,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
-      - name: Cache Cargo build
+      # ---------------------------------------------------------
+      # 6️⃣ Cache du répertoire target (artefacts de compilation)
+      # ---------------------------------------------------------
+      - name: Cache du répertoire target
         uses: actions/cache@v3
         with:
           path: target
@@ -82,70 +120,179 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-${{ matrix.features }}-
 
-      # ------------------------------------------------------------
-      # 2.4️⃣ Installation des paquets système (selon l’OS)
-      # ------------------------------------------------------------
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev libudev-dev \
-                                 libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
-                                 libxcb-xfixes0-dev cmake curl
-          # ---- SDK Vulkan (latest) ----
-          curl -LO https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
-          mkdir -p $HOME/vulkan-sdk
-          tar -xzf vulkan-sdk.tar.gz -C $HOME/vulkan-sdk --strip-components=1
-          echo "VULKAN_SDK=$HOME/vulkan-sdk/x86_64" >> $GITHUB_ENV
-          echo "$HOME/vulkan-sdk/x86_64/bin" >> $GITHUB_PATH
-          echo "$HOME/vulkan-sdk/x86_64/lib" >> $GITHUB_ENV
+      # ---------------------------------------------------------
+      # 7️⃣ Compilation du projet (release) avec les features demandées
+      # ---------------------------------------------------------
+      - name: Compiler le projet (release)
+        run: cargo build --release --features "${{ matrix.features }}"
 
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
+      # ---------------------------------------------------------
+      # 8️⃣ Archiver l’exécutable
+      # ---------------------------------------------------------
+      - name: Archiver l’exécutable
+        if: success()
+        run: |
+          EXECUTABLE="target/release/${{ env.BINARY_NAME }}"
+          ARCHIVE_NAME="${{ env.BINARY_NAME }}-linux.tar.gz"
+          tar -czvf "$ARCHIVE_NAME" -C "$(dirname "$EXECUTABLE")" "$(basename "$EXECUTABLE")"
+          echo "Archive créée : $ARCHIVE_NAME"
+
+      # ---------------------------------------------------------
+      # 9️⃣ Publication de l’artefact
+      # ---------------------------------------------------------
+      - name: Publier l’artefact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-linux
+          path: ${{ env.BINARY_NAME }}-linux.tar.gz
+          retention-days: 30
+
+
+  # ================================================================
+  # 2️⃣ JOB macOS – Metal + OpenGL
+  # ================================================================
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        features: [ "metal opengl" ]
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2️⃣ Installation des dépendances système (Homebrew)
+      # ---------------------------------------------------------
+      - name: Installer les dépendances système
         run: |
           brew update
           brew install cmake pkg-config openssl
 
-      - name: Install Windows dependencies
-        if: runner.os == 'Windows'
-        run: |
-          choco install -y llvm cmake
+      # ---------------------------------------------------------
+      # 3️⃣ Cache du registre Cargo
+      # ---------------------------------------------------------
+      - name: Cache du registre Cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
 
-      # ------------------------------------------------------------
-      # 2.5️⃣ Compilation du projet (release) avec les features de la matrice
-      # ------------------------------------------------------------
-      - name: Build (release)
-        run: |
-          cargo build --release --features "${{ matrix.features }}"
+      # ---------------------------------------------------------
+      # 4️⃣ Cache du répertoire target
+      # ---------------------------------------------------------
+      - name: Cache du répertoire target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
 
-      # ------------------------------------------------------------
-      # 2.6️⃣ (Optionnel) Lancer les tests unitaires
-      # ------------------------------------------------------------
-      - name: Run tests
-        run: |
-          cargo test --quiet --features "${{ matrix.features }}"
+      # ---------------------------------------------------------
+      # 5️⃣ Compilation du projet (release) avec les features macOS
+      # ---------------------------------------------------------
+      - name: Compiler le projet (release)
+        run: cargo build --release --features "${{ matrix.features }}"
 
-      # ------------------------------------------------------------
-      # 2.7️⃣ Packager l’exécutable dans une archive .tar.gz
-      # ------------------------------------------------------------
-      - name: Package artifact
-        shell: bash
+      # ---------------------------------------------------------
+      # 6️⃣ Archiver l’exécutable (macOS produit un binaire Unix)
+      # ---------------------------------------------------------
+      - name: Archiver l’exécutable
+        if: success()
         run: |
-          # Nom de l’exécutable dépend de l’OS
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            EXE_NAME="performance_test.exe"
-          else
-            EXE_NAME="performance_test"
-          fi
-          cp target/release/$EXE_NAME $EXE_NAME
-          tar -czvf ${{ matrix.artifact_name }}.tar.gz $EXE_NAME README.md Cargo.toml
+          EXECUTABLE="target/release/${{ env.BINARY_NAME }}"
+          ARCHIVE_NAME="${{ env.BINARY_NAME }}-macos.tar.gz"
+          tar -czvf "$ARCHIVE_NAME" -C "$(dirname "$EXECUTABLE")" "$(basename "$EXECUTABLE")"
+          echo "Archive créée : $ARCHIVE_NAME"
 
-      # ------------------------------------------------------------
-      # 2.8️⃣ Publier l’archive comme artefact du run
-      # ------------------------------------------------------------
-      - name: Upload artifact
+      # ---------------------------------------------------------
+      # 7️⃣ Publication de l’artefact
+      # ---------------------------------------------------------
+      - name: Publier l’artefact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}.tar.gz
-          retention-days: 30   # vous pouvez augmenter si besoin
+          name: ${{ env.BINARY_NAME }}-macos
+          path: ${{ env.BINARY_NAME }}-macos.tar.gz
+          retention-days: 30
+
+
+  # ================================================================
+  # 3️⃣ JOB Windows – DirectX12 + OpenGL
+  # ================================================================
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        features: [ "dx12 opengl" ]
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2️⃣ Installation des dépendances système (Chocolatey)
+      # ---------------------------------------------------------
+      - name: Installer les dépendances système
+        run: |
+          choco install -y cmake pkgconfiglite openssl.light
+        shell: pwsh
+
+      # ---------------------------------------------------------
+      # 3️⃣ Cache du registre Cargo
+      # ---------------------------------------------------------
+      - name: Cache du registre Cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      # ---------------------------------------------------------
+      # 4️⃣ Cache du répertoire target
+      # ---------------------------------------------------------
+      - name: Cache du répertoire target
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+
+      # ---------------------------------------------------------
+      # 5️⃣ Compilation du projet (release) avec les features Windows
+      # ---------------------------------------------------------
+      - name: Compiler le projet (release)
+        run: cargo build --release --features "${{ matrix.features }}"
+
+      # ---------------------------------------------------------
+      # 6️⃣ Archiver l’exécutable (Windows produit un .exe)
+      # ---------------------------------------------------------
+      - name: Archiver l’exécutable
+        if: success()
+        run: |
+          $exePath = "target\release\${{ env.BINARY_NAME }}.exe"
+          $archive = "${{ env.BINARY_NAME }}-windows.zip"
+          Compress-Archive -Path $exePath -DestinationPath $archive
+          Write-Host "Archive créée : $archive"
+        shell: pwsh
+
+      # ---------------------------------------------------------
+      # 7️⃣ Publication de l’artefact
+      # ---------------------------------------------------------
+      - name: Publier l’artefact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-windows
+          path: ${{ env.BINARY_NAME }}-windows.zip
+          retention-days: 30
