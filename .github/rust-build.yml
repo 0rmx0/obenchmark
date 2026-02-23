@@ -1,0 +1,171 @@
+name: Build & Release Rust Project
+
+# Déclencheurs du workflow
+on:
+  push:
+    branches: [ main, master ]          # à chaque push sur la branche principale
+  pull_request:
+    branches: [ main, master ]          # à chaque PR vers la branche principale
+  workflow_dispatch:                    # lancement manuel depuis l’interface GitHub
+
+# Jobs du workflow
+jobs:
+  # --------------------------------------------------------------
+  # Job principal : compilation, tests et création d’artefacts
+  # --------------------------------------------------------------
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    # Matrice d’OS et de combinaisons de features
+    strategy:
+      fail-fast: false                  # continue même si un job échoue
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Chaque ligne représente une combinaison de features
+        include:
+          - os: ubuntu-latest
+            features: "vulkan opengl"
+            artifact-name: "performance_test-linux"
+          - os: macos-latest
+            features: "metal opengl"
+            artifact-name: "performance_test-macos"
+          - os: windows-latest
+            features: "dx12 opengl"
+            artifact-name: "performance_test-windows"
+
+    steps:
+      # --------------------------------------------------------
+      # 1️⃣ Checkout du code source
+      # --------------------------------------------------------
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # 2️⃣ Installer Rust (stable) via rustup
+      # --------------------------------------------------------
+      - name: Installer Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # --------------------------------------------------------
+      # 3️⃣ Cache du répertoire Cargo (dépendances + builds)
+      # --------------------------------------------------------
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+
+      # --------------------------------------------------------
+      # 4️⃣ Installer les dépendances système (Linux/macOS)
+      # --------------------------------------------------------
+      - name: Installer les paquets système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libudev-dev \
+                                 libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+                                 libxcb-xfixes0-dev cmake curl
+          # Installation du SDK Vulkan (latest)
+          curl -LO https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+          mkdir -p $HOME/vulkan-sdk
+          tar -xzf vulkan-sdk.tar.gz -C $HOME/vulkan-sdk --strip-components=1
+          echo "VULKAN_SDK=$HOME/vulkan-sdk/x86_64" >> $GITHUB_ENV
+          echo "$HOME/vulkan-sdk/x86_64/bin" >> $GITHUB_PATH
+          echo "$HOME/vulkan-sdk/x86_64/lib" >> $GITHUB_ENV
+
+      - name: Installer les paquets système (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install cmake pkg-config openssl
+          # Le SDK Metal est natif sur macOS, aucune installation supplémentaire requise
+
+      - name: Installer les paquets système (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y llvm cmake
+          # DirectX12 est fourni par Windows, aucune installation supplémentaire n’est nécessaire
+
+      # --------------------------------------------------------
+      # 5️⃣ Compilation du projet avec les features de la matrice
+      # --------------------------------------------------------
+      - name: Compiler le projet (release)
+        run: |
+          cargo build --release --features "${{ matrix.features }}"
+
+      # --------------------------------------------------------
+      # 6️⃣ Exécuter les tests unitaires (facultatif mais recommandé)
+      # --------------------------------------------------------
+      - name: Lancer les tests
+        run: |
+          cargo test --quiet --features "${{ matrix.features }}"
+
+      # --------------------------------------------------------
+      # 7️⃣ Packager l’exécutable dans une archive
+      # --------------------------------------------------------
+      - name: Créer l’archive d’artefact
+        shell: bash
+        run: |
+          # Nom de l’exécutable dépend du OS
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            EXE_NAME="performance_test.exe"
+          else
+            EXE_NAME="performance_test"
+          fi
+          cp target/release/$EXE_NAME $EXE_NAME
+          tar -czvf ${{ matrix.artifact-name }}.tar.gz $EXE_NAME README.md Cargo.toml
+
+      # --------------------------------------------------------
+      # 8️⃣ Publier l’artefact en tant que build artifact
+      # --------------------------------------------------------
+      - name: Upload artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-name }}.tar.gz
+          retention-days: 30   # durée de conservation (modifiable)
+
+  # --------------------------------------------------------------
+  # Job optionnel : création d’une release GitHub avec les artefacts
+  # --------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release:')
+    permissions:
+      contents: write   # nécessaire pour créer une release
+
+    steps:
+      - name: Récupérer les artefacts du job précédent
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Créer une nouvelle release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.sha }}
+          name: Release ${{ github.sha }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: ./artifacts/**/*.tar.gz
