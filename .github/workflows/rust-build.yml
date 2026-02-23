@@ -1,0 +1,151 @@
+name: Manual Build (all platforms)
+
+# ------------------------------------------------------------------
+# 1️⃣ Le workflow ne se lance que sur demande (bouton "Run workflow")
+# ------------------------------------------------------------------
+on:
+  workflow_dispatch:                     # <‑‑ déclencheur manuel
+    inputs:
+      # Vous pouvez ajouter des paramètres ici si vous voulez choisir
+      # une version précise, un tag, etc. (facultatif)
+      # Exemple :
+      # version:
+      #   description: "Version du binaire (ex: v1.2.3)"
+      #   required: false
+      #   default: ""
+
+# ------------------------------------------------------------------
+# 2️⃣ Job principal : compilation sur chaque OS + chaque set de features
+# ------------------------------------------------------------------
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    # --------------------------------------------------------------
+    # Matrice d’OS + de combinaisons de features
+    # --------------------------------------------------------------
+    strategy:
+      fail-fast: false                 # continuer même si un job échoue
+      matrix:
+        include:
+          # ---------- Linux ----------
+          - os: ubuntu-latest
+            features: "vulkan opengl"
+            artifact_name: "performance_test-linux"
+
+          # ---------- macOS ----------
+          - os: macos-latest
+            features: "metal opengl"
+            artifact_name: "performance_test-macos"
+
+          # ---------- Windows ----------
+          - os: windows-latest
+            features: "dx12 opengl"
+            artifact_name: "performance_test-windows"
+
+    steps:
+      # ------------------------------------------------------------
+      # 2.1️⃣ Checkout du dépôt
+      # ------------------------------------------------------------
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # 2.2️⃣ Installer Rust (stable) via rustup
+      # ------------------------------------------------------------
+      - name: Installer Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # ------------------------------------------------------------
+      # 2.3️⃣ Cache du registre Cargo (dépendances) et du dossier target
+      # ------------------------------------------------------------
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+
+      # ------------------------------------------------------------
+      # 2.4️⃣ Installation des paquets système (selon l’OS)
+      # ------------------------------------------------------------
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libudev-dev \
+                                 libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+                                 libxcb-xfixes0-dev cmake curl
+          # ---- SDK Vulkan (latest) ----
+          curl -LO https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+          mkdir -p $HOME/vulkan-sdk
+          tar -xzf vulkan-sdk.tar.gz -C $HOME/vulkan-sdk --strip-components=1
+          echo "VULKAN_SDK=$HOME/vulkan-sdk/x86_64" >> $GITHUB_ENV
+          echo "$HOME/vulkan-sdk/x86_64/bin" >> $GITHUB_PATH
+          echo "$HOME/vulkan-sdk/x86_64/lib" >> $GITHUB_ENV
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install cmake pkg-config openssl
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y llvm cmake
+
+      # ------------------------------------------------------------
+      # 2.5️⃣ Compilation du projet (release) avec les features de la matrice
+      # ------------------------------------------------------------
+      - name: Build (release)
+        run: |
+          cargo build --release --features "${{ matrix.features }}"
+
+      # ------------------------------------------------------------
+      # 2.6️⃣ (Optionnel) Lancer les tests unitaires
+      # ------------------------------------------------------------
+      - name: Run tests
+        run: |
+          cargo test --quiet --features "${{ matrix.features }}"
+
+      # ------------------------------------------------------------
+      # 2.7️⃣ Packager l’exécutable dans une archive .tar.gz
+      # ------------------------------------------------------------
+      - name: Package artifact
+        shell: bash
+        run: |
+          # Nom de l’exécutable dépend de l’OS
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            EXE_NAME="performance_test.exe"
+          else
+            EXE_NAME="performance_test"
+          fi
+          cp target/release/$EXE_NAME $EXE_NAME
+          tar -czvf ${{ matrix.artifact_name }}.tar.gz $EXE_NAME README.md Cargo.toml
+
+      # ------------------------------------------------------------
+      # 2.8️⃣ Publier l’archive comme artefact du run
+      # ------------------------------------------------------------
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
+          retention-days: 30   # vous pouvez augmenter si besoin
