@@ -11,11 +11,11 @@ license = "MIT OR Apache-2.0"
 eframe = { version = "0.27", features = ["glow"] }   # eGUI + OpenGL backend
 egui   = "0.27"
 
-# GPU backends (optionnels selon la plateforme)
-ash    = { version = "0.38", optional = true }      # Vulkan
-metal  = { version = "0.24", optional = true }      # Metal (macOS uniquement)
-windows = { version = "0.52", optional = true }     # DirectX12 (Windows)
-glutin = { version = "0.31", optional = true }      # OpenGL (fallback)
+# GPU backends (optionnels)
+ash     = { version = "0.38", optional = true }      # Vulkan
+metal   = { version = "0.24", optional = true }      # Metal (macOS uniquement)
+windows = { version = "0.52", optional = true }      # DirectX12 (Windows)
+glutin  = { version = "0.31", optional = true }      # OpenGL (fallback)
 
 # Sérialisation / export
 serde = { version = "1.0", features = ["derive"] }
@@ -30,10 +30,20 @@ log    = "0.4"
 env_logger = "0.10"
 
 [features]
-# Les features activées par défaut lors d’un simple `cargo build`
-default = ["vulkan", "opengl"]
+# -----------------------------------------------------------------
+# Features activés par défaut (celui‑ci sera utilisé si aucune
+# feature explicite n’est passée à `cargo build`).
+# -----------------------------------------------------------------
+default = ["vulkan", "opengl"]   # convenable pour Linux et pour les builds généraux
 
+# Backend Vulkan (requiert la crate `ash`)
 vulkan = ["ash"]
-metal  = ["metal"]
-dx12   = ["windows"]
+
+# Backend Metal (requiert la crate `metal`) – uniquement macOS
+metal = ["metal"]
+
+# Backend DirectX12 (requiert la crate `windows`) – uniquement Windows
+dx12 = ["windows"]
+
+# Backend OpenGL (requiert la crate `glutin`) – commun à toutes les plateformes
 opengl = ["glutin"]
