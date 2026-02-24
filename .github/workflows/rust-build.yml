@@ -1,147 +1,64 @@
-# .github/workflows/rust-build.yml
 # ------------------------------------------------------------
-# Workflow GitHub Actions pour compiler le projet **performance_test**
-# sur Ubuntu, macOS et Windows.
+# GitHub Actions – OBenchmark V2 Professional
+# Build multi-platform (Linux / macOS / Windows)
 # ------------------------------------------------------------
 
-name: Rust Build (Linux / macOS / Windows)
+name: OBenchmark Pro – Cross Platform Build
 
-# Le workflow peut être déclenché manuellement ou à chaque push sur les
-# branches principales.
 on:
-  workflow_dispatch:          # bouton « Run workflow » dans l’onglet Actions
+  workflow_dispatch:
   push:
     branches: [ main, master ]
 
-# -----------------------------------------------------------------
-# Variables communes (facultatives)
-# -----------------------------------------------------------------
 env:
-  # Nom de l’exécutable produit (identique sur toutes les plateformes)
-  BINARY_NAME: performance_test
+  BINARY_NAME: obenchmark_pro
 
-# -----------------------------------------------------------------
-# Jobs
-# -----------------------------------------------------------------
 jobs:
-  # ================================================================
-  # 1️⃣ JOB Ubuntu – Vulkan + OpenGL
-  # ================================================================
-  build-ubuntu:
-    name: Build (Ubuntu)
+
+  # ==========================================================
+  # 🐧 Linux
+  # ==========================================================
+  build-linux:
+    name: Build (Linux)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Vous pouvez ajouter d’autres combinaisons de features ici.
-        features: [ "vulkan opengl" ]
+
     steps:
-      # ---------------------------------------------------------
-      # 1️⃣ Checkout du dépôt
-      # ---------------------------------------------------------
-      - name: Récupérer le code source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2️⃣ Installation des dépendances système
-      # ---------------------------------------------------------
-      - name: Installer les paquets système
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            pkg-config \
-            libssl-dev \
-            libudev-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            curl
+      # Install Rust toolchain (stable)
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      # ---------------------------------------------------------
-      # 3️⃣ Nettoyer un éventuel ancien SDK Vulkan
-      # ---------------------------------------------------------
-      - name: Supprimer l’ancien archive du SDK Vulkan (au cas où)
-        run: rm -f "${RUNNER_TEMP}/vulkan-sdk.tar.gz" || true
-
-      # ---------------------------------------------------------
-      # 4️⃣ Télécharger et installer le SDK Vulkan (méthode robuste)
-      # ---------------------------------------------------------
-      - name: Télécharger et installer le SDK Vulkan
-        run: |
-          set -euo pipefail
-
-          VULKAN_SDK_URL="https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz"
-          ARCHIVE="${RUNNER_TEMP}/vulkan-sdk.tar.gz"
-
-          echo "🔽 Téléchargement du SDK Vulkan depuis $VULKAN_SDK_URL"
-          curl -L -fSL "$VULKAN_SDK_URL" -o "$ARCHIVE"
-
-          # Vérifier que le fichier est bien un gzip
-          if ! file "$ARCHIVE" | grep -q 'gzip compressed data'; then
-            echo "❌ Le fichier téléchargé n’est pas un gzip !"
-            echo "=== Début du fichier ==="
-            head -n 20 "$ARCHIVE"
-            echo "=== Fin du fichier ==="
-            exit 1
-          fi
-
-          mkdir -p "$HOME/vulkan-sdk"
-          tar -xzf "$ARCHIVE" -C "$HOME/vulkan-sdk" --strip-components=1
-
-          # Exporter les variables d’environnement pour les steps suivants
-          echo "VULKAN_SDK=$HOME/vulkan-sdk/x86_64" >> $GITHUB_ENV
-          echo "$HOME/vulkan-sdk/x86_64/bin" >> $GITHUB_PATH
-
-          echo "✅ SDK Vulkan installé dans $HOME/vulkan-sdk"
-
-      # ---------------------------------------------------------
-      # 5️⃣ Cache du registre Cargo (dépendances crates)
-      # ---------------------------------------------------------
-      - name: Cache du registre Cargo
+      # Cache Cargo registry
+      - name: Cache Cargo registry
         uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          key: linux-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+            linux-cargo-
 
-      # ---------------------------------------------------------
-      # 6️⃣ Cache du répertoire target (artefacts de compilation)
-      # ---------------------------------------------------------
-      - name: Cache du répertoire target
+      # Cache target directory
+      - name: Cache target
         uses: actions/cache@v3
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          key: linux-target-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+            linux-target-
 
-      # ---------------------------------------------------------
-      # 7️⃣ Compilation du projet (release) avec les features demandées
-      # ---------------------------------------------------------
-      - name: Compiler le projet (release)
-        run: cargo build --release --features "${{ matrix.features }}"
+      - name: Build release
+        run: cargo build --release
 
-      # ---------------------------------------------------------
-      # 8️⃣ Archiver l’exécutable
-      # ---------------------------------------------------------
-      - name: Archiver l’exécutable
-        if: success()
+      - name: Archive binary
         run: |
-          EXECUTABLE="target/release/${{ env.BINARY_NAME }}"
-          ARCHIVE_NAME="${{ env.BINARY_NAME }}-linux.tar.gz"
-          tar -czvf "$ARCHIVE_NAME" -C "$(dirname "$EXECUTABLE")" "$(basename "$EXECUTABLE")"
-          echo "Archive créée : $ARCHIVE_NAME"
+          tar -czvf ${{ env.BINARY_NAME }}-linux.tar.gz \
+          -C target/release ${{ env.BINARY_NAME }}
 
-      # ---------------------------------------------------------
-      # 9️⃣ Publication de l’artefact
-      # ---------------------------------------------------------
-      - name: Publier l’artefact
-        if: success()
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-linux
@@ -149,73 +66,46 @@ jobs:
           retention-days: 30
 
 
-  # ================================================================
-  # 2️⃣ JOB macOS – Metal + OpenGL
-  # ================================================================
+  # ==========================================================
+  # 🍎 macOS
+  # ==========================================================
   build-macos:
     name: Build (macOS)
     runs-on: macos-latest
-    strategy:
-      matrix:
-        features: [ "metal opengl" ]
+
     steps:
-      - name: Récupérer le code source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2️⃣ Installation des dépendances système (Homebrew)
-      # ---------------------------------------------------------
-      - name: Installer les dépendances système
-        run: |
-          brew update
-          brew install cmake pkg-config openssl
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      # ---------------------------------------------------------
-      # 3️⃣ Cache du registre Cargo
-      # ---------------------------------------------------------
-      - name: Cache du registre Cargo
+      - name: Cache Cargo
         uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+            macos-cargo-
 
-      # ---------------------------------------------------------
-      # 4️⃣ Cache du répertoire target
-      # ---------------------------------------------------------
-      - name: Cache du répertoire target
+      - name: Cache target
         uses: actions/cache@v3
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          key: macos-target-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+            macos-target-
 
-      # ---------------------------------------------------------
-      # 5️⃣ Compilation du projet (release) avec les features macOS
-      # ---------------------------------------------------------
-      - name: Compiler le projet (release)
-        run: cargo build --release --features "${{ matrix.features }}"
+      - name: Build release
+        run: cargo build --release
 
-      # ---------------------------------------------------------
-      # 6️⃣ Archiver l’exécutable (macOS produit un binaire Unix)
-      # ---------------------------------------------------------
-      - name: Archiver l’exécutable
-        if: success()
+      - name: Archive binary
         run: |
-          EXECUTABLE="target/release/${{ env.BINARY_NAME }}"
-          ARCHIVE_NAME="${{ env.BINARY_NAME }}-macos.tar.gz"
-          tar -czvf "$ARCHIVE_NAME" -C "$(dirname "$EXECUTABLE")" "$(basename "$EXECUTABLE")"
-          echo "Archive créée : $ARCHIVE_NAME"
+          tar -czvf ${{ env.BINARY_NAME }}-macos.tar.gz \
+          -C target/release ${{ env.BINARY_NAME }}
 
-      # ---------------------------------------------------------
-      # 7️⃣ Publication de l’artefact
-      # ---------------------------------------------------------
-      - name: Publier l’artefact
-        if: success()
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-macos
@@ -223,74 +113,48 @@ jobs:
           retention-days: 30
 
 
-  # ================================================================
-  # 3️⃣ JOB Windows – DirectX12 + OpenGL
-  # ================================================================
+  # ==========================================================
+  # 🪟 Windows
+  # ==========================================================
   build-windows:
     name: Build (Windows)
     runs-on: windows-latest
-    strategy:
-      matrix:
-        features: [ "dx12 opengl" ]
+
     steps:
-      - name: Récupérer le code source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2️⃣ Installation des dépendances système (Chocolatey)
-      # ---------------------------------------------------------
-      - name: Installer les dépendances système
-        run: |
-          choco install -y cmake pkgconfiglite openssl.light
-        shell: pwsh
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      # ---------------------------------------------------------
-      # 3️⃣ Cache du registre Cargo
-      # ---------------------------------------------------------
-      - name: Cache du registre Cargo
+      - name: Cache Cargo
         uses: actions/cache@v3
         with:
           path: |
             ~\.cargo\registry
             ~\.cargo\git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+            windows-cargo-
 
-      # ---------------------------------------------------------
-      # 4️⃣ Cache du répertoire target
-      # ---------------------------------------------------------
-      - name: Cache du répertoire target
+      - name: Cache target
         uses: actions/cache@v3
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
+          key: windows-target-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ matrix.features }}-
+            windows-target-
 
-      # ---------------------------------------------------------
-      # 5️⃣ Compilation du projet (release) avec les features Windows
-      # ---------------------------------------------------------
-      - name: Compiler le projet (release)
-        run: cargo build --release --features "${{ matrix.features }}"
+      - name: Build release
+        run: cargo build --release
 
-      # ---------------------------------------------------------
-      # 6️⃣ Archiver l’exécutable (Windows produit un .exe)
-      # ---------------------------------------------------------
-      - name: Archiver l’exécutable
-        if: success()
+      - name: Archive binary
         run: |
-          $exePath = "target\release\${{ env.BINARY_NAME }}.exe"
-          $archive = "${{ env.BINARY_NAME }}-windows.zip"
-          Compress-Archive -Path $exePath -DestinationPath $archive
-          Write-Host "Archive créée : $archive"
+          Compress-Archive `
+            -Path target\release\${{ env.BINARY_NAME }}.exe `
+            -DestinationPath ${{ env.BINARY_NAME }}-windows.zip
         shell: pwsh
 
-      # ---------------------------------------------------------
-      # 7️⃣ Publication de l’artefact
-      # ---------------------------------------------------------
-      - name: Publier l’artefact
-        if: success()
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-windows
