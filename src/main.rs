@@ -1,35 +1,19 @@
 mod runner;
 mod benchmarks;
 mod report;
+mod gui;
 
-use benchmarks::{cpu::CpuBenchmark, memory::MemoryBenchmark, disk::DiskBenchmark};
-use runner::run_async;
-use std::thread;
-use std::time::Duration;
+fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 600.0])
+            .with_resizable(true),
+        ..Default::default()
+    };
 
-fn main() {
-    let benches: Vec<Box<dyn benchmarks::Benchmark + Send>> = vec![
-        Box::new(CpuBenchmark::new()),
-        Box::new(MemoryBenchmark),
-        Box::new(DiskBenchmark),
-    ];
-
-    let rx = run_async(benches);
-
-    println!("Running benchmarks...");
-
-    loop {
-        if let Ok(result) = rx.try_recv() {
-            match result {
-                Ok(res) => {
-                    report::print_report(&res);
-                }
-                Err(e) => {
-                    eprintln!("Benchmark failed: {:?}", e);
-                }
-            }
-            break;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
+    eframe::run_native(
+        "OBenchmark Professional",
+        options,
+        Box::new(|_cc| Box::new(gui::OBenchmarkApp::default())),
+    )
 }
