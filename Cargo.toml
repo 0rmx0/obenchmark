@@ -1,50 +1,11 @@
 [package]
-name = "performance_test"
-version = "0.1.0"
+name = "obenchmark_pro"
+version = "0.2.0"
 edition = "2021"
-authors = ["Votre Nom <votre.email@example.com>"]
-description = "Benchmark multi‑plateforme (CPU, RAM, DISK, GPU) en Rust + eGUI"
-license = "MIT OR Apache-2.0"
 
 [dependencies]
-# GUI (eGUI + OpenGL backend)
-eframe = { version = "0.27", features = ["glow"] }
-egui   = "0.27"
-
-# Back‑ends GPU (optionnels)
-ash     = { version = "0.38", optional = true }   # Vulkan
-metal   = { version = "0.24", optional = true }   # Metal (macOS uniquement)
-windows = { version = "0.52", optional = true }   # DirectX12 (Windows)
-glutin  = { version = "0.31", optional = true }   # OpenGL (fallback)
-
-# Sérialisation / export
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Parallelisation (facultatif mais recommandé)
-rayon = "1.9"
-
-# Utilitaires
-anyhow = "1.0"
-log    = "0.4"
-env_logger = "0.10"
-
-# -------------------------------------------------------------
-# FEATURES
-# -------------------------------------------------------------
-[features]
-# Features activés par défaut (utilisés si aucune feature n’est précisée)
-# Ici on active Vulkan + OpenGL, ce qui convient aux builds Linux et aux builds généraux.
-default = ["vulkan", "opengl"]
-
-# Backend Vulkan (requiert la crate `ash`)
-vulkan = ["ash"]
-
-# Backend Metal (requiert la crate `metal`) – uniquement macOS
-metal = ["metal"]
-
-# Backend DirectX12 (requiert la crate `windows`) – uniquement Windows
-dx12 = ["windows"]
-
-# Backend OpenGL (requiert la crate `glutin`) – commun à toutes les plateformes
-opengl = ["glutin"]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.30"
+num_cpus = "1"

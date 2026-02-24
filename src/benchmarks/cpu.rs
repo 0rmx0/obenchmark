@@ -1,31 +1,64 @@
-//! Benchmark CPU très simple : calcul de nombres premiers.
+use std::thread;
+use std::time::Instant;
+use std::hint::black_box;
+use anyhow::Result;
+use num_cpus;
+use crate::benchmarks::Benchmark;
 
-pub fn cpu_test() -> u64 {
-    // Compte le nombre de nombres premiers jusqu’à 100 000.
-    let limit = 100_000usize;
-    let mut count = 0usize;
-    for n in 2..=limit {
-        if is_prime(n) {
-            count += 1;
-        }
+pub struct CpuBenchmark;
+
+impl CpuBenchmark {
+    pub fn new() -> Self {
+        Self
     }
-    // Convertit le nombre de primes en un « score » (plus c’est grand, meilleur).
-    count as u64
+
+    fn single_core_test() -> u64 {
+        let iterations = 30_000_000u64;
+        let mut acc = 0u64;
+        let start = Instant::now();
+
+        for i in 0..iterations {
+            acc = black_box(acc.wrapping_add(i));
+        }
+
+        let duration = start.elapsed().as_secs_f64();
+        (iterations as f64 / duration) as u64
+    }
+
+    fn multi_core_test() -> u64 {
+        let threads = num_cpus::get();
+        let iterations = 20_000_000u64;
+
+        let start = Instant::now();
+
+        let mut handles = Vec::new();
+
+        for _ in 0..threads {
+            handles.push(thread::spawn(move || {
+                let mut acc = 0u64;
+                for i in 0..iterations {
+                    acc = black_box(acc.wrapping_add(i));
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let duration = start.elapsed().as_secs_f64();
+        ((iterations * threads as u64) as f64 / duration) as u64
+    }
 }
 
-fn is_prime(n: usize) -> bool {
-    if n <= 3 {
-        return n > 1;
+impl Benchmark for CpuBenchmark {
+    fn name(&self) -> &'static str {
+        "CPU MultiCore"
     }
-    if n % 2 == 0 || n % 3 == 0 {
-        return false;
+
+    fn run(&self) -> Result<u64> {
+        let single = Self::single_core_test();
+        let multi = Self::multi_core_test();
+        Ok((single + multi) / 2)
     }
-    let mut i = 5usize;
-    while i * i <= n {
-        if n % i == 0 || n % (i + 2) == 0 {
-            return false;
-        }
-        i += 6;
-    }
-    true
 }
