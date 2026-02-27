@@ -1,31 +1,147 @@
 use std::time::Instant;
 use anyhow::Result;
 use crate::engines::benchmark::Benchmark;
+use crate::util::sysinfo::get_system_info;
+use std::thread;
 
-pub struct MemoryBenchmark;
+// 1. Opérations base de données (simulées avec vector)
+pub struct MemoryDBOps;
+impl Benchmark for MemoryDBOps {
+    fn name(&self) -> &str { "Mem DB Ops" }
+    fn weight(&self) -> u64 { 2 }
 
-impl Benchmark for MemoryBenchmark {
-    fn name(&self) -> &str { "Memory Bandwidth" }
-    fn weight(&self) -> u64 { 3 }
+    fn run(&self) -> Result<u64> {
+        let mut db = Vec::with_capacity(1_000_000);
+        let start = Instant::now();
+        for i in 0..1_000_000 {
+            db.push(i);
+            let _ = db[i / 2];
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let ops = (2_000_000.0 / elapsed) as u64; // approx operations per second
+        Ok(ops)
+    }
+}
+
+// 2. Lecture en cache (petit buffer répétitif)
+pub struct MemoryCachedRead;
+impl Benchmark for MemoryCachedRead {
+    fn name(&self) -> &str { "Mem Cached Read" }
+    fn weight(&self) -> u64 { 2 }
+
+    fn run(&self) -> Result<u64> {
+        let size = 8 * 1024 * 1024; // 8MB
+        let data = vec![0u8; size];
+        let start = Instant::now();
+        let mut _sum = 0u64;
+        for _ in 0..100 {
+            for &b in &data {
+                _sum += b as u64;
+            }
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let mb = (size as f64 * 100.0) / (1024.0 * 1024.0);
+        Ok((mb / elapsed) as u64)
+    }
+}
+
+// 3. Lecture non cachée (grand buffer)
+pub struct MemoryUncachedRead;
+impl Benchmark for MemoryUncachedRead {
+    fn name(&self) -> &str { "Mem Uncached Read" }
+    fn weight(&self) -> u64 { 2 }
 
     fn run(&self) -> Result<u64> {
         let size = 512 * 1024 * 1024;
-        let mut data = vec![0u8; size];
-
-        let start_write = Instant::now();
-        for i in 0..size {
-            data[i] = (i % 255) as u8;
-        }
-        let write_time = start_write.elapsed().as_secs_f64();
-
-        let start_read = Instant::now();
+        let data = vec![0u8; size];
+        let start = Instant::now();
         let mut _sum = 0u64;
         for &b in &data {
             _sum += b as u64;
         }
-        let read_time = start_read.elapsed().as_secs_f64();
+        let elapsed = start.elapsed().as_secs_f64();
+        let mb = (size as f64) / (1024.0 * 1024.0);
+        Ok((mb / elapsed) as u64)
+    }
+}
 
-        let bandwidth = (size as f64 / (write_time + read_time)) / 1_000_000.0;
-        Ok(bandwidth as u64)
+// 4. Écriture mémoire
+pub struct MemoryWrite;
+impl Benchmark for MemoryWrite {
+    fn name(&self) -> &str { "Mem Write" }
+    fn weight(&self) -> u64 { 2 }
+
+    fn run(&self) -> Result<u64> {
+        let size = 512 * 1024 * 1024;
+        let mut data = vec![0u8; size];
+        let start = Instant::now();
+        for i in 0..size {
+            data[i] = (i % 255) as u8;
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let mb = (size as f64) / (1024.0 * 1024.0);
+        Ok((mb / elapsed) as u64)
+    }
+}
+
+// 5. RAM disponible
+pub struct MemoryAvailable;
+impl Benchmark for MemoryAvailable {
+    fn name(&self) -> &str { "Mem Available" }
+    fn weight(&self) -> u64 { 1 }
+
+    fn run(&self) -> Result<u64> {
+        let sys = get_system_info();
+        Ok((sys.available_memory() / 1024) as u64) // MB
+    }
+}
+
+// 6. Latence mémoire (accès aléatoire chaîné)
+pub struct MemoryLatency;
+impl Benchmark for MemoryLatency {
+    fn name(&self) -> &str { "Mem Latency" }
+    fn weight(&self) -> u64 { 2 }
+
+    fn run(&self) -> Result<u64> {
+        let n = 10_000_000;
+        let mut data = vec![0usize; n];
+        // construire une liste chaînée
+        for i in 0..n {
+            data[i] = (i + 1) % n;
+        }
+        let mut idx = 0;
+        let start = Instant::now();
+        for _ in 0..n {
+            idx = data[idx];
+        }
+        let elapsed = start.elapsed().as_nanos() as f64;
+        let ns_per_access = elapsed / (n as f64);
+        Ok(ns_per_access as u64)
+    }
+}
+
+// 7. Mémoire fileté
+pub struct MemoryThreaded;
+impl Benchmark for MemoryThreaded {
+    fn name(&self) -> &str { "Mem Threaded" }
+    fn weight(&self) -> u64 { 2 }
+
+    fn run(&self) -> Result<u64> {
+        let threads = num_cpus::get();
+        let size = 100 * 1024 * 1024;
+        let start = Instant::now();
+        let mut handles = Vec::new();
+        for _ in 0..threads {
+            handles.push(thread::spawn(move || {
+                let mut local = vec![0u8; size];
+                for i in 0..local.len() {
+                    local[i] = (i % 255) as u8;
+                }
+            }));
+        }
+        for h in handles { h.join().ok(); }
+        let elapsed = start.elapsed().as_secs_f64();
+        let mb = (size as f64 * threads as f64) / (1024.0 * 1024.0);
+        Ok((mb / elapsed) as u64)
     }
 }

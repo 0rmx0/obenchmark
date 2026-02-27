@@ -4,7 +4,30 @@ use chrono::Local;
 
 use crate::{
     engines::runner::{run_benchmarks, RunnerEvent},
-    benchmarks::{cpu::CpuBenchmark, memory::MemoryBenchmark, disk::DiskBenchmark},
+    benchmarks::{
+        cpu::{
+            CpuMultiCore,
+            CpuIntMath,
+            CpuFloatMath,
+            CpuPrimeCalc,
+            CpuSSE,
+            CpuCompression,
+            CpuEncryption,
+            CpuPhysics,
+            CpuSorting,
+            CpuUCT,
+        },
+        memory::{
+            MemoryDBOps,
+            MemoryCachedRead,
+            MemoryUncachedRead,
+            MemoryWrite,
+            MemoryAvailable,
+            MemoryLatency,
+            MemoryThreaded,
+        },
+        disk::{DiskSequentialRead, DiskSequentialWrite, DiskRandomIOPS32K, DiskRandomIOPS4K},
+    },
     util::sysinfo::get_system_info,
     app::state::AppState,
 };
@@ -24,19 +47,20 @@ impl OBenchmarkApp {
 
 impl eframe::App for OBenchmarkApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        let mut should_restart = false;
 
         if let Some(rx) = &self.receiver {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     RunnerEvent::BenchStarted(name) => {
-                        let completed = match &self.state {
-                            AppState::Running { completed, .. } => *completed,
-                            _ => 0,
+                        let (completed, total) = match &self.state {
+                            AppState::Running { completed, total, .. } => (*completed, *total),
+                            _ => (0, 0),
                         };
                         self.state = AppState::Running {
                             current_test: name.clone(),
                             completed,
-                            total: 3,
+                            total,
                         };
                     }
                     RunnerEvent::BenchFinished(_, _) => {
@@ -62,25 +86,49 @@ impl eframe::App for OBenchmarkApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("OBenchmark");
+            let avail = ui.available_width();
+            // responsive heading size
+            let heading_size = (avail / 20.0).clamp(20.0, 60.0);
+            ui.heading(RichText::new("OBenchmark").size(heading_size));
             ui.separator();
 
             match &self.state {
                 AppState::Idle => {
-                    if ui.button("Start Benchmark").clicked() {
-                        let (tx, rx) = unbounded();
+                    ui.vertical_centered(|ui| {
+                        if ui.add_sized([avail * 0.5, 40.0], egui::Button::new("Start Benchmark")).clicked() {
+                            let (tx, rx) = unbounded();
 
-                        run_benchmarks(
-                            vec![
-                                Box::new(CpuBenchmark),
-                                Box::new(MemoryBenchmark),
-                                Box::new(DiskBenchmark),
-                            ],
-                            tx,
-                        );
+                            // build vector of benchmarks so we can know total count
+                            let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
+                            Box::new(CpuMultiCore),
+                            Box::new(CpuIntMath),
+                            Box::new(CpuFloatMath),
+                            Box::new(CpuPrimeCalc),
+                            Box::new(CpuSSE),
+                            Box::new(CpuCompression),
+                            Box::new(CpuEncryption),
+                            Box::new(CpuPhysics),
+                            Box::new(CpuSorting),
+                            Box::new(CpuUCT),
+                            Box::new(MemoryDBOps),
+                            Box::new(MemoryCachedRead),
+                            Box::new(MemoryUncachedRead),
+                            Box::new(MemoryWrite),
+                            Box::new(MemoryAvailable),
+                            Box::new(MemoryLatency),
+                            Box::new(MemoryThreaded),
+                            Box::new(DiskSequentialRead),
+                            Box::new(DiskSequentialWrite),
+                            Box::new(DiskRandomIOPS32K),
+                            Box::new(DiskRandomIOPS4K),
+                        ];
+                        let total = benches.len();
+                        self.state = AppState::Running { current_test: String::new(), completed: 0, total };
 
+                        run_benchmarks(benches, tx);
                         self.receiver = Some(rx);
-                    }
+                        }
+                    });
                 }
 
                 AppState::Running { current_test, completed, total } => {
@@ -89,42 +137,53 @@ impl eframe::App for OBenchmarkApp {
                     
                     // Barre de progression du test actuel
                     ui.label("Progression du test:");
-                    ui.add(egui::ProgressBar::new(0.5).show_percentage());
+                    ui.add(egui::ProgressBar::new(0.5).desired_width(avail).show_percentage());
                     
                     ui.separator();
                     
                     // Barre de progression globale
                     let global_progress = *completed as f32 / *total as f32;
                     ui.label(format!("Tests: {}/{}", completed, total));
-                    ui.add(egui::ProgressBar::new(global_progress).show_percentage());
+                    ui.add(egui::ProgressBar::new(global_progress).desired_width(avail).show_percentage());
                 }
 
                 AppState::Showing(result) => {
-                    ui.label(RichText::new(format!("Score final: {}", result.final_score)).size(32.0).strong());
-                    ui.separator();
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        // responsive final score text
+                        let score_size = (avail / 15.0).clamp(20.0, 48.0);
+                        ui.label(RichText::new(format!("Score final: {}", result.final_score)).size(score_size).strong());
+                        ui.separator();
 
-                    ui.label(RichText::new("Détail des scores:").size(18.0).strong());
-                    for score in &result.scores {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{}:", score.name));
-                            ui.label(RichText::new(format!("{}", score.raw_score)).strong());
+                        ui.label(RichText::new("Détail des scores:").size(18.0).strong());
+                        // use columns for score detail to adapt width
+                        ui.columns(2, |cols| {
+                            for score in &result.scores {
+                                cols[0].label(&score.name);
+                                cols[1].label(RichText::new(format!("{}", score.raw_score)).strong());
+                            }
                         });
-                    }
 
-                    ui.separator();
-                    ui.label("System Info");
+                        ui.separator();
+                        ui.label("System Info");
 
-                    let sys = get_system_info();
+                        let sys = get_system_info();
 
-                    ui.label(format!("CPU: {}", sys.global_cpu_info().brand()));
-                    ui.label(format!("Cores: {}", sys.cpus().len()));
-                    ui.label(format!("RAM: {} MB", sys.total_memory() / 1024));
-                    ui.label(format!("OS: {:?}", sysinfo::System::name()));
+                        ui.label(format!("CPU: {}", sys.global_cpu_info().brand()));
+                        ui.label(format!("Cores: {}", sys.cpus().len()));
+                        ui.label(format!("RAM: {} MB", sys.total_memory() / 1024));
+                        ui.label(format!("OS: {:?}", sysinfo::System::name()));
 
-                    if ui.button("Export Result JSON").clicked() {
-                        let json = serde_json::to_string_pretty(&result).unwrap();
-                        std::fs::write(format!("bench_{}.json", Local::now().timestamp()), json).ok();
-                    }
+                        ui.horizontal(|ui| {
+                            if ui.button("Export Result JSON").clicked() {
+                                let json = serde_json::to_string_pretty(&result).unwrap();
+                                std::fs::write(format!("bench_{}.json", Local::now().timestamp()), json).ok();
+                            }
+
+                            if ui.button("🔄 New Analysis").clicked() {
+                                should_restart = true;
+                            }
+                        });
+                    });
                 }
 
                 AppState::Error(err) => {
@@ -132,6 +191,38 @@ impl eframe::App for OBenchmarkApp {
                 }
             }
         });
+
+        if should_restart {
+            let (tx, rx) = unbounded();
+            let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
+                Box::new(CpuMultiCore),
+                Box::new(CpuIntMath),
+                Box::new(CpuFloatMath),
+                Box::new(CpuPrimeCalc),
+                Box::new(CpuSSE),
+                Box::new(CpuCompression),
+                Box::new(CpuEncryption),
+                Box::new(CpuPhysics),
+                Box::new(CpuSorting),
+                Box::new(CpuUCT),
+                Box::new(MemoryDBOps),
+                Box::new(MemoryCachedRead),
+                Box::new(MemoryUncachedRead),
+                Box::new(MemoryWrite),
+                Box::new(MemoryAvailable),
+                Box::new(MemoryLatency),
+                Box::new(MemoryThreaded),
+                Box::new(DiskSequentialRead),
+                Box::new(DiskSequentialWrite),
+                Box::new(DiskRandomIOPS32K),
+                Box::new(DiskRandomIOPS4K),
+            ];
+            let total = benches.len();
+            self.state = AppState::Running { current_test: String::new(), completed: 0, total };
+
+            run_benchmarks(benches, tx);
+            self.receiver = Some(rx);
+        }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
