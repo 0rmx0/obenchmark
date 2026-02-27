@@ -1,19 +1,12 @@
-mod runner;
+mod app;
+mod engines;
 mod benchmarks;
-mod report;
-mod gui;
+mod model;
+mod util;
+
+use app::ui::OBenchmarkApp;
 
 fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 600.0])
-            .with_resizable(true),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "OBenchmark Professional",
-        options,
-        Box::new(|_cc| Box::new(gui::OBenchmarkApp::default())),
-    )
+    let options = eframe::NativeOptions::default();
+    eframe::run_native("OBenchmark", options, Box::new(|cc| Box::new(OBenchmarkApp::new(cc))))
 }

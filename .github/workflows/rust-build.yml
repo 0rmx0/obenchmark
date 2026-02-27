@@ -11,7 +11,7 @@ on:
     branches: [ main, master ]
 
 env:
-  BINARY_NAME: obenchmark_pro
+  BINARY_NAME: obenchmark
 
 jobs:
 
@@ -32,7 +32,7 @@ jobs:
 
       # Cache Cargo registry
       - name: Cache Cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -43,7 +43,7 @@ jobs:
 
       # Cache target directory
       - name: Cache target
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target
           key: linux-target-${{ hashFiles('Cargo.lock') }}
@@ -80,7 +80,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -90,7 +90,7 @@ jobs:
             macos-cargo-
 
       - name: Cache target
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target
           key: macos-target-${{ hashFiles('Cargo.lock') }}
@@ -127,7 +127,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~\.cargo\registry
@@ -137,7 +137,7 @@ jobs:
             windows-cargo-
 
       - name: Cache target
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target
           key: windows-target-${{ hashFiles('Cargo.lock') }}
