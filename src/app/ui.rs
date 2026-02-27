@@ -5,7 +5,18 @@ use chrono::Local;
 use crate::{
     engines::runner::{run_benchmarks, RunnerEvent},
     benchmarks::{
-        cpu::CpuBenchmark,
+        cpu::{
+            CpuMultiCore,
+            CpuIntMath,
+            CpuFloatMath,
+            CpuPrimeCalc,
+            CpuSSE,
+            CpuCompression,
+            CpuEncryption,
+            CpuPhysics,
+            CpuSorting,
+            CpuUCT,
+        },
         memory::{
             MemoryDBOps,
             MemoryCachedRead,
@@ -85,7 +96,16 @@ impl eframe::App for OBenchmarkApp {
 
                         // build vector of benchmarks so we can know total count
                         let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
-                            Box::new(CpuBenchmark),
+                            Box::new(CpuMultiCore),
+                            Box::new(CpuIntMath),
+                            Box::new(CpuFloatMath),
+                            Box::new(CpuPrimeCalc),
+                            Box::new(CpuSSE),
+                            Box::new(CpuCompression),
+                            Box::new(CpuEncryption),
+                            Box::new(CpuPhysics),
+                            Box::new(CpuSorting),
+                            Box::new(CpuUCT),
                             Box::new(MemoryDBOps),
                             Box::new(MemoryCachedRead),
                             Box::new(MemoryUncachedRead),
@@ -165,7 +185,16 @@ impl eframe::App for OBenchmarkApp {
         if should_restart {
             let (tx, rx) = unbounded();
             let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
-                Box::new(CpuBenchmark),
+                Box::new(CpuMultiCore),
+                Box::new(CpuIntMath),
+                Box::new(CpuFloatMath),
+                Box::new(CpuPrimeCalc),
+                Box::new(CpuSSE),
+                Box::new(CpuCompression),
+                Box::new(CpuEncryption),
+                Box::new(CpuPhysics),
+                Box::new(CpuSorting),
+                Box::new(CpuUCT),
                 Box::new(MemoryDBOps),
                 Box::new(MemoryCachedRead),
                 Box::new(MemoryUncachedRead),
