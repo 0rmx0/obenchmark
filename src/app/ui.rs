@@ -24,6 +24,7 @@ impl OBenchmarkApp {
 
 impl eframe::App for OBenchmarkApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        let mut should_restart = false;
 
         if let Some(rx) = &self.receiver {
             while let Ok(event) = rx.try_recv() {
@@ -121,10 +122,16 @@ impl eframe::App for OBenchmarkApp {
                     ui.label(format!("RAM: {} MB", sys.total_memory() / 1024));
                     ui.label(format!("OS: {:?}", sysinfo::System::name()));
 
-                    if ui.button("Export Result JSON").clicked() {
-                        let json = serde_json::to_string_pretty(&result).unwrap();
-                        std::fs::write(format!("bench_{}.json", Local::now().timestamp()), json).ok();
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Export Result JSON").clicked() {
+                            let json = serde_json::to_string_pretty(&result).unwrap();
+                            std::fs::write(format!("bench_{}.json", Local::now().timestamp()), json).ok();
+                        }
+
+                        if ui.button("🔄 New Analysis").clicked() {
+                            should_restart = true;
+                        }
+                    });
                 }
 
                 AppState::Error(err) => {
@@ -132,6 +139,22 @@ impl eframe::App for OBenchmarkApp {
                 }
             }
         });
+
+        if should_restart {
+            let (tx, rx) = unbounded();
+
+            run_benchmarks(
+                vec![
+                    Box::new(CpuBenchmark),
+                    Box::new(MemoryBenchmark),
+                    Box::new(DiskBenchmark),
+                ],
+                tx,
+            );
+
+            self.receiver = Some(rx);
+            self.state = AppState::Idle;
+        }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
