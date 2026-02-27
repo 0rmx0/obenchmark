@@ -4,7 +4,11 @@ use chrono::Local;
 
 use crate::{
     engines::runner::{run_benchmarks, RunnerEvent},
-    benchmarks::{cpu::CpuBenchmark, memory::MemoryBenchmark, disk::DiskBenchmark},
+    benchmarks::{
+        cpu::CpuBenchmark,
+        memory::MemoryBenchmark,
+        disk::{DiskSequentialRead, DiskSequentialWrite, DiskRandomIOPS32K, DiskRandomIOPS4K},
+    },
     util::sysinfo::get_system_info,
     app::state::AppState,
 };
@@ -37,7 +41,7 @@ impl eframe::App for OBenchmarkApp {
                         self.state = AppState::Running {
                             current_test: name.clone(),
                             completed,
-                            total: 3,
+                            total: 6,
                         };
                     }
                     RunnerEvent::BenchFinished(_, _) => {
@@ -75,7 +79,10 @@ impl eframe::App for OBenchmarkApp {
                             vec![
                                 Box::new(CpuBenchmark),
                                 Box::new(MemoryBenchmark),
-                                Box::new(DiskBenchmark),
+                                Box::new(DiskSequentialRead),
+                                Box::new(DiskSequentialWrite),
+                                Box::new(DiskRandomIOPS32K),
+                                Box::new(DiskRandomIOPS4K),
                             ],
                             tx,
                         );
@@ -147,7 +154,10 @@ impl eframe::App for OBenchmarkApp {
                 vec![
                     Box::new(CpuBenchmark),
                     Box::new(MemoryBenchmark),
-                    Box::new(DiskBenchmark),
+                    Box::new(DiskSequentialRead),
+                    Box::new(DiskSequentialWrite),
+                    Box::new(DiskRandomIOPS32K),
+                    Box::new(DiskRandomIOPS4K),
                 ],
                 tx,
             );
