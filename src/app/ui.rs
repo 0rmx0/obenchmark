@@ -6,7 +6,15 @@ use crate::{
     engines::runner::{run_benchmarks, RunnerEvent},
     benchmarks::{
         cpu::CpuBenchmark,
-        memory::MemoryBenchmark,
+        memory::{
+            MemoryDBOps,
+            MemoryCachedRead,
+            MemoryUncachedRead,
+            MemoryWrite,
+            MemoryAvailable,
+            MemoryLatency,
+            MemoryThreaded,
+        },
         disk::{DiskSequentialRead, DiskSequentialWrite, DiskRandomIOPS32K, DiskRandomIOPS4K},
     },
     util::sysinfo::get_system_info,
@@ -34,14 +42,14 @@ impl eframe::App for OBenchmarkApp {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     RunnerEvent::BenchStarted(name) => {
-                        let completed = match &self.state {
-                            AppState::Running { completed, .. } => *completed,
-                            _ => 0,
+                        let (completed, total) = match &self.state {
+                            AppState::Running { completed, total, .. } => (*completed, *total),
+                            _ => (0, 0),
                         };
                         self.state = AppState::Running {
                             current_test: name.clone(),
                             completed,
-                            total: 6,
+                            total,
                         };
                     }
                     RunnerEvent::BenchFinished(_, _) => {
@@ -75,18 +83,25 @@ impl eframe::App for OBenchmarkApp {
                     if ui.button("Start Benchmark").clicked() {
                         let (tx, rx) = unbounded();
 
-                        run_benchmarks(
-                            vec![
-                                Box::new(CpuBenchmark),
-                                Box::new(MemoryBenchmark),
-                                Box::new(DiskSequentialRead),
-                                Box::new(DiskSequentialWrite),
-                                Box::new(DiskRandomIOPS32K),
-                                Box::new(DiskRandomIOPS4K),
-                            ],
-                            tx,
-                        );
+                        // build vector of benchmarks so we can know total count
+                        let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
+                            Box::new(CpuBenchmark),
+                            Box::new(MemoryDBOps),
+                            Box::new(MemoryCachedRead),
+                            Box::new(MemoryUncachedRead),
+                            Box::new(MemoryWrite),
+                            Box::new(MemoryAvailable),
+                            Box::new(MemoryLatency),
+                            Box::new(MemoryThreaded),
+                            Box::new(DiskSequentialRead),
+                            Box::new(DiskSequentialWrite),
+                            Box::new(DiskRandomIOPS32K),
+                            Box::new(DiskRandomIOPS4K),
+                        ];
+                        let total = benches.len();
+                        self.state = AppState::Running { current_test: String::new(), completed: 0, total };
 
+                        run_benchmarks(benches, tx);
                         self.receiver = Some(rx);
                     }
                 }
@@ -149,21 +164,25 @@ impl eframe::App for OBenchmarkApp {
 
         if should_restart {
             let (tx, rx) = unbounded();
+            let benches: Vec<Box<dyn crate::engines::benchmark::Benchmark>> = vec![
+                Box::new(CpuBenchmark),
+                Box::new(MemoryDBOps),
+                Box::new(MemoryCachedRead),
+                Box::new(MemoryUncachedRead),
+                Box::new(MemoryWrite),
+                Box::new(MemoryAvailable),
+                Box::new(MemoryLatency),
+                Box::new(MemoryThreaded),
+                Box::new(DiskSequentialRead),
+                Box::new(DiskSequentialWrite),
+                Box::new(DiskRandomIOPS32K),
+                Box::new(DiskRandomIOPS4K),
+            ];
+            let total = benches.len();
+            self.state = AppState::Running { current_test: String::new(), completed: 0, total };
 
-            run_benchmarks(
-                vec![
-                    Box::new(CpuBenchmark),
-                    Box::new(MemoryBenchmark),
-                    Box::new(DiskSequentialRead),
-                    Box::new(DiskSequentialWrite),
-                    Box::new(DiskRandomIOPS32K),
-                    Box::new(DiskRandomIOPS4K),
-                ],
-                tx,
-            );
-
+            run_benchmarks(benches, tx);
             self.receiver = Some(rx);
-            self.state = AppState::Idle;
         }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(16));

@@ -77,7 +77,7 @@ impl Benchmark for DiskRandomIOPS32K {
 
     fn run(&self) -> Result<u64> {
         let block_size = 32 * 1024; // 32 KB
-        let queue_depth = 20;
+        let _queue_depth = 20;
         let total_ops = 10000;
         let file_size = 1024 * 1024 * 1024; // 1 GB
 
