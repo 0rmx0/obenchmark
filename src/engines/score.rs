@@ -26,6 +26,8 @@ enum BenchClass {
 /// comparables malgré des unités et ordres de grandeur différents.
 fn per_bench_baseline(name: &str) -> Option<u64> {
     match name {
+        #[cfg(test)]
+        "Test Zero Baseline" => Some(0),
         // CPU (ops/s ou dérivés)
         "CPU Multi-Core" => Some(80_000_000),
         "CPU Int Math" => Some(50_000_000),
@@ -41,17 +43,17 @@ fn per_bench_baseline(name: &str) -> Option<u64> {
         "CPU UCT Single" => Some(10_000_000),
 
         // Mémoire
-        "Mem DB Ops" => Some(10_000_000),   // ops/s approx
-        "Mem Cached Read" => Some(50_000),  // MB/s
-        "Mem Uncached Read" => Some(20_000),// MB/s
-        "Mem Write" => Some(20_000),        // MB/s
-        "Mem Available" => Some(8 * 1024),  // 8 GiB en MB
-        "Mem Latency" => Some(50_000_000),  // accès/s
-        "Mem Threaded" => Some(50_000),     // MB/s agrégés
+        "Mem DB Ops" => Some(10_000_000),    // ops/s approx
+        "Mem Cached Read" => Some(50_000),   // MB/s
+        "Mem Uncached Read" => Some(20_000), // MB/s
+        "Mem Write" => Some(20_000),         // MB/s
+        "Mem Available" => Some(8 * 1024),   // 8 GiB en MB
+        "Mem Latency" => Some(50_000_000),   // accès/s
+        "Mem Threaded" => Some(50_000),      // MB/s agrégés
 
         // Disque
-        "Disk Seq Read" => Some(500),       // MB/s
-        "Disk Seq Write" => Some(400),      // MB/s
+        "Disk Seq Read" => Some(500),  // MB/s
+        "Disk Seq Write" => Some(400), // MB/s
         "Disk IOPS 32K QD20" => Some(50_000),
         "Disk IOPS 4K QD1" => Some(10_000),
 
@@ -75,6 +77,10 @@ pub fn normalize(name: &str, raw_score: u64) -> u64 {
         }
     });
 
+    if baseline == 0 {
+        return 0;
+    }
+
     // Normaliser autour de 1000 par rapport à la baseline
     let mut norm = ((raw_score as f64 / baseline as f64) * 1000.0) as u64;
     // Autoriser un écart plus important entre machines avant saturation
@@ -88,31 +94,18 @@ pub fn normalize(name: &str, raw_score: u64) -> u64 {
 fn classify(name: &str) -> BenchClass {
     match name {
         // CPU
-        "CPU Multi-Core"
-        | "CPU Int Math"
-        | "CPU Float Math"
-        | "CPU Prime Calc"
-        | "CPU SSE Ext"
-        | "CPU Compression"
-        | "CPU Encryption"
-        | "CPU Physics"
-        | "CPU Sorting"
+        "CPU Multi-Core" | "CPU Int Math" | "CPU Float Math" | "CPU Prime Calc" | "CPU SSE Ext"
+        | "CPU Compression" | "CPU Encryption" | "CPU Physics" | "CPU Sorting"
         | "CPU UCT Single" => BenchClass::Cpu,
 
         // Mémoire
-        "Mem DB Ops"
-        | "Mem Cached Read"
-        | "Mem Uncached Read"
-        | "Mem Write"
-        | "Mem Available"
-        | "Mem Latency"
-        | "Mem Threaded" => BenchClass::Mem,
+        "Mem DB Ops" | "Mem Cached Read" | "Mem Uncached Read" | "Mem Write" | "Mem Available"
+        | "Mem Latency" | "Mem Threaded" => BenchClass::Mem,
 
         // Disque
-        "Disk Seq Read"
-        | "Disk Seq Write"
-        | "Disk IOPS 32K QD20"
-        | "Disk IOPS 4K QD1" => BenchClass::Disk,
+        "Disk Seq Read" | "Disk Seq Write" | "Disk IOPS 32K QD20" | "Disk IOPS 4K QD1" => {
+            BenchClass::Disk
+        }
 
         // Fallback pour d'éventuels nouveaux noms
         _ => {
@@ -187,7 +180,11 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
                 "[score] category total_score={} total_weight={} averaged={}",
                 total_score, total_weight, averaged
             );
-            let capped = if averaged > 999_999u128 { 999_999u128 } else { averaged };
+            let capped = if averaged > 999_999u128 {
+                999_999u128
+            } else {
+                averaged
+            };
             capped as u64
         }
     };
@@ -202,4 +199,55 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
 
 pub fn compute_final_score(scores: &[BenchScore]) -> u64 {
     compute_aggregated_scores(scores).global
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bench(name: &str, raw_score: u64, weight: u64) -> BenchScore {
+        BenchScore {
+            name: name.to_string(),
+            raw_score,
+            weight,
+        }
+    }
+
+    #[test]
+    fn normalize_cpu_baseline_hits_reference() {
+        assert_eq!(normalize("CPU Multi-Core", 80_000_000), 1000);
+    }
+
+    #[test]
+    fn normalize_fallback_uses_family_baseline() {
+        let value = normalize("Custom CPU Weird", 100_000_000);
+        assert!(value >= 1000);
+    }
+
+    #[test]
+    fn normalize_handles_zero_baseline() {
+        assert_eq!(normalize("Test Zero Baseline", 123), 0);
+    }
+
+    #[test]
+    fn aggregated_scores_respect_weights_and_categories() {
+        let scores = vec![
+            bench("CPU Multi-Core", 80_000_000, 2),
+            bench("Mem Write", 20_000, 3),
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        assert_eq!(aggregated.global, 1000);
+        assert_eq!(aggregated.cpu, 1000);
+        assert_eq!(aggregated.mem, 1000);
+        assert_eq!(aggregated.disk, 0);
+    }
+
+    #[test]
+    fn aggregated_scores_empty_are_zero() {
+        let aggregated = compute_aggregated_scores(&[]);
+        assert_eq!(aggregated.global, 0);
+        assert_eq!(aggregated.cpu, 0);
+        assert_eq!(aggregated.mem, 0);
+        assert_eq!(aggregated.disk, 0);
+    }
 }

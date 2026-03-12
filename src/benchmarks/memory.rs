@@ -3,8 +3,8 @@ use std::thread;
 use std::time::Instant;
 
 use anyhow::Result;
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand::seq::SliceRandom;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use crate::engines::benchmark::Benchmark;
 use crate::util::sysinfo::get_system_info;
@@ -252,7 +252,9 @@ impl Benchmark for MemoryThreaded {
                 black_box(&local[0..std::cmp::min(1024, local.len())]);
             }));
         }
-        for h in handles { h.join().ok(); }
+        for h in handles {
+            h.join().ok();
+        }
         let elapsed = start.elapsed().as_secs_f64();
         let total_bytes = size_bytes * threads as u64;
         let mb = bytes_to_mb(total_bytes);

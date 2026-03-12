@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::model::result::BenchResult;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {

@@ -30,17 +30,15 @@ impl Benchmark for CpuMultiCore {
         let mut iterations: u64 = 0;
 
         while start.elapsed() < CPU_BENCH_DURATION {
-            (0u64..1_000_000)
-                .into_par_iter()
-                .for_each(|i| {
-                    // Mélange entier relativement coûteux et difficile à optimiser.
-                    let v = i
-                        .wrapping_mul(6364136223846793005)
-                        .wrapping_add(1)
-                        .rotate_left(17)
-                        ^ 0x9E37_79B9_7F4A_7C15;
-                    black_box(v);
-                });
+            (0u64..1_000_000).into_par_iter().for_each(|i| {
+                // Mélange entier relativement coûteux et difficile à optimiser.
+                let v = i
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1)
+                    .rotate_left(17)
+                    ^ 0x9E37_79B9_7F4A_7C15;
+                black_box(v);
+            });
             iterations += 1_000_000;
         }
         let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
@@ -132,7 +130,9 @@ impl Benchmark for CpuPrimeCalc {
                     break;
                 }
             }
-            if is_prime { count += 1; }
+            if is_prime {
+                count += 1;
+            }
             n += 1;
         }
         black_box(count);

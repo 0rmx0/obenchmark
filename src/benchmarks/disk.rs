@@ -85,7 +85,12 @@ fn bytes_per_sec_to_mb_per_sec(bytes: u64, secs: f64) -> u64 {
     (mb / secs) as u64
 }
 
-fn random_read_iops(path: &Path, file_size: u64, block_size: usize, queue_depth: usize) -> Result<u64> {
+fn random_read_iops(
+    path: &Path,
+    file_size: u64,
+    block_size: usize,
+    queue_depth: usize,
+) -> Result<u64> {
     let duration = Duration::from_secs(RANDOM_TEST_DURATION_SECS);
     let start = Instant::now();
 
@@ -159,7 +164,10 @@ impl Benchmark for DiskSequentialRead {
 
         let elapsed = start.elapsed().as_secs_f64();
         let _ = std::fs::remove_file(&path);
-        Ok(bytes_per_sec_to_mb_per_sec(std::cmp::min(read_bytes, size), elapsed))
+        Ok(bytes_per_sec_to_mb_per_sec(
+            std::cmp::min(read_bytes, size),
+            elapsed,
+        ))
     }
 }
 
