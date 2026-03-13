@@ -177,6 +177,8 @@ pub fn get_detailed_system_info() -> SystemInfo {
     #[cfg(target_os = "windows")]
     {
         use serde::Deserialize;
+        use std::collections::HashMap;
+        use std::process::Command;
         use wmi::WMIConnection;
 
         // ---------- CPU via WMI ----------
@@ -329,6 +331,7 @@ pub fn get_detailed_system_info() -> SystemInfo {
     {
         use serde::Deserialize;
         use std::collections::HashMap;
+        use std::process::Command;
         use wmi::WMIConnection;
 
         #[derive(Deserialize, Debug)]
@@ -378,15 +381,103 @@ pub fn get_detailed_system_info() -> SystemInfo {
             if iface.contains("nvme") || m.contains("nvme") {
                 return Some("NVMe".to_string());
             }
-            if media.contains("ssd") {
+            if media.contains("ssd") || m.contains("ssd") {
                 return Some("SSD".to_string());
             }
-            if media.contains("hdd") || media.contains("fixed") {
+            if media.contains("hdd") {
+                return Some("HDD".to_string());
+            }
+            if media.contains("fixed") {
                 // "Fixed hard disk media" (ancien Windows) => HDD par défaut
                 return Some("HDD".to_string());
             }
             None
         }
+
+        #[derive(Deserialize)]
+        struct StoragePhysicalDisk {
+            DeviceId: Option<u32>,
+            MediaType: Option<String>,
+            BusType: Option<String>,
+        }
+
+        #[derive(Clone)]
+        struct StorageDiskSummary {
+            media: Option<String>,
+            bus: Option<String>,
+        }
+
+        impl StorageDiskSummary {
+            fn disk_type(&self) -> Option<String> {
+                if let Some(bus) = &self.bus {
+                    if bus.eq_ignore_ascii_case("nvme") {
+                        return Some("NVMe".into());
+                    }
+                }
+                if let Some(media) = &self.media {
+                    match media.to_lowercase().as_str() {
+                        "ssd" => return Some("SSD".into()),
+                        "hdd" => return Some("HDD".into()),
+                        "scm" => return Some("SCM".into()),
+                        _ => {}
+                    }
+                }
+                None
+            }
+        }
+
+        fn parse_physical_drive_id(device_id: &str) -> Option<u32> {
+            device_id
+                .trim()
+                .rsplit_once("PHYSICALDRIVE")
+                .and_then(|(_, suffix)| suffix.parse::<u32>().ok())
+        }
+
+        fn parse_physical_disk_json(txt: &str) -> Vec<StoragePhysicalDisk> {
+            let trimmed = txt.trim();
+            if trimmed.is_empty() || trimmed == "null" {
+                return vec![];
+            }
+            if let Ok(list) = serde_json::from_str::<Vec<StoragePhysicalDisk>>(trimmed) {
+                list
+            } else if let Ok(single) = serde_json::from_str::<StoragePhysicalDisk>(trimmed) {
+                vec![single]
+            } else {
+                vec![]
+            }
+        }
+
+        fn collect_storage_disk_types() -> HashMap<u32, StorageDiskSummary> {
+            let mut map = HashMap::new();
+            if let Ok(out) = Command::new("powershell")
+                .args(&[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-PhysicalDisk | Select-Object DeviceId,MediaType,BusType | ConvertTo-Json -Depth 1",
+                ])
+                .output()
+            {
+                if out.status.success() {
+                    if let Ok(txt) = String::from_utf8(out.stdout) {
+                        for disk in parse_physical_disk_json(&txt) {
+                            if let Some(id) = disk.DeviceId {
+                                map.insert(
+                                    id,
+                                    StorageDiskSummary {
+                                        media: disk.MediaType.filter(|s| !s.trim().is_empty()),
+                                        bus: disk.BusType.filter(|s| !s.trim().is_empty()),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            map
+        }
+
+        let storage_disk_types = collect_storage_disk_types();
 
         if let Ok(wmi_con) = WMIConnection::new() {
             // 1) Partition -> Letter mapping (ex: "Disk #0, Partition #1" -> "C:")
@@ -464,6 +555,11 @@ pub fn get_detailed_system_info() -> SystemInfo {
                 );
 
                 let Some(physical) = physical else { continue; };
+                let physical_idx = parse_physical_drive_id(&physical);
+                let storage_disk_type = physical_idx
+                    .and_then(|idx| storage_disk_types.get(&idx))
+                    .and_then(|info| info.disk_type());
+                let preferred_type = storage_disk_type.clone().or_else(|| disk_type.clone());
 
                 // Récupère toutes les lettres associées à ce physical drive
                 let mut letters: Vec<String> = physical_to_partitions
@@ -481,7 +577,9 @@ pub fn get_detailed_system_info() -> SystemInfo {
                         if let Some(di) = disks.get_mut(idx) {
                             if di.vendor.is_none() { di.vendor = vendor.clone(); }
                             if di.model.is_none() { di.model = model.clone(); }
-                            if di.disk_type.is_none() { di.disk_type = disk_type.clone(); }
+                            if let Some(pt) = preferred_type.clone() {
+                                di.disk_type = Some(pt);
+                            }
                         }
                     }
                 }
