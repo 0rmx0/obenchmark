@@ -44,3 +44,14 @@ Raw results are normalized against predefined baselines per category. Each norma
 
 ## Usage
 Build and run with `cargo run` or use the provided binary. Click **Start Benchmark** to begin; the GUI will display progress and final results. You can export a JSON file of the scores using the corresponding button or restart the tests with the "New Analysis" button.
+
+## CLI Usage
+You can run the same benchmark suite without the GUI with `obenchmark cli` (or `cargo run -- cli`).
+- `--list` prints the available benchmarks.
+- `--filter <substring>` runs only benchmarks whose name contains the provided text (case-insens).
+- `--raw` appends the raw score and unit per benchmark to the summary.
+- `--json` prints the full result as JSON to stdout; this also feeds `--export`.
+- `--export <file>` saves the serialized result to `file`.
+- The CLI shows a progress bar that reports the current benchmark and the number completed, so you can watch execution even outside the GUI.
+
+The CLI still reports final, CPU, RAM and disk scores plus system information, so you can script repeated runs or integrate the tool into CI.

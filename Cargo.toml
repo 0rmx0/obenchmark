@@ -19,6 +19,8 @@ num_cpus = "1.0"
 flate2 = "1.0"
 sha2 = "0.10"
 rand = "0.8"
+clap = { version = "4.4", features = ["derive"] }
+indicatif = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 wmi = "0.18.3"
