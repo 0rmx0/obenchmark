@@ -218,14 +218,12 @@ impl Benchmark for CpuEncryption {
         let data = vec![0u8; 1024 * 1024];
         let mut hasher = Sha256::new();
         let start = Instant::now();
-        let mut count: u64 = 0;
         let mut total_bytes: u64 = 0;
 
         while start.elapsed() < CPU_BENCH_DURATION {
             hasher.update(&data);
             let digest = hasher.finalize_reset();
             black_box(digest);
-            count += 1;
             total_bytes += data.len() as u64;
         }
 
