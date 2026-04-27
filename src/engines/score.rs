@@ -197,10 +197,6 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
     }
 }
 
-pub fn compute_final_score(scores: &[BenchScore]) -> u64 {
-    compute_aggregated_scores(scores).global
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

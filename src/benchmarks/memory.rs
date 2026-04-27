@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use rand::seq::SliceRandom;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng};
 
 use crate::engines::benchmark::Benchmark;
 use crate::util::sysinfo::get_system_info;
