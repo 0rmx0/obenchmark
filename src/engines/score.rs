@@ -209,9 +209,30 @@ mod tests {
         }
     }
 
+    // Tests pour normalize()
     #[test]
     fn normalize_cpu_baseline_hits_reference() {
         assert_eq!(normalize("CPU Multi-Core", 80_000_000), 1000);
+    }
+
+    #[test]
+    fn normalize_cpu_int_math_reference() {
+        assert_eq!(normalize("CPU Int Math", 50_000_000), 1000);
+    }
+
+    #[test]
+    fn normalize_cpu_float_math_reference() {
+        assert_eq!(normalize("CPU Float Math", 10_000_000), 1000);
+    }
+
+    #[test]
+    fn normalize_mem_cached_read_reference() {
+        assert_eq!(normalize("Mem Cached Read", 50_000), 1000);
+    }
+
+    #[test]
+    fn normalize_disk_seq_read_reference() {
+        assert_eq!(normalize("Disk Seq Read", 500), 1000);
     }
 
     #[test]
@@ -225,6 +246,96 @@ mod tests {
         assert_eq!(normalize("Test Zero Baseline", 123), 0);
     }
 
+    #[test]
+    fn normalize_caps_at_max() {
+        // Score très élevé devrait être plafonné à 100_000
+        let value = normalize("CPU Multi-Core", 80_000_000 * 100);
+        assert_eq!(value, 100_000);
+    }
+
+    #[test]
+    fn normalize_handles_zero_raw_score() {
+        assert_eq!(normalize("CPU Multi-Core", 0), 0);
+    }
+
+    // Tests pour classify()
+    #[test]
+    fn classify_cpu_benchmarks() {
+        assert_eq!(classify("CPU Multi-Core"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Int Math"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Float Math"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Prime Calc"), BenchClass::Cpu);
+        assert_eq!(classify("CPU SSE Ext"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Compression"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Encryption"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Physics"), BenchClass::Cpu);
+        assert_eq!(classify("CPU Sorting"), BenchClass::Cpu);
+        assert_eq!(classify("CPU UCT Single"), BenchClass::Cpu);
+    }
+
+    #[test]
+    fn classify_memory_benchmarks() {
+        assert_eq!(classify("Mem DB Ops"), BenchClass::Mem);
+        assert_eq!(classify("Mem Cached Read"), BenchClass::Mem);
+        assert_eq!(classify("Mem Uncached Read"), BenchClass::Mem);
+        assert_eq!(classify("Mem Write"), BenchClass::Mem);
+        assert_eq!(classify("Mem Available"), BenchClass::Mem);
+        assert_eq!(classify("Mem Latency"), BenchClass::Mem);
+        assert_eq!(classify("Mem Threaded"), BenchClass::Mem);
+    }
+
+    #[test]
+    fn classify_disk_benchmarks() {
+        assert_eq!(classify("Disk Seq Read"), BenchClass::Disk);
+        assert_eq!(classify("Disk Seq Write"), BenchClass::Disk);
+        assert_eq!(classify("Disk IOPS 32K QD20"), BenchClass::Disk);
+        assert_eq!(classify("Disk IOPS 4K QD1"), BenchClass::Disk);
+    }
+
+    #[test]
+    fn classify_fallback_to_other() {
+        assert_eq!(classify("Unknown Benchmark"), BenchClass::Other);
+    }
+
+    #[test]
+    fn classify_fallback_by_content() {
+        assert_eq!(classify("My CPU Test"), BenchClass::Cpu);
+        assert_eq!(classify("Memory Speed"), BenchClass::Mem);
+        assert_eq!(classify("Disk Performance"), BenchClass::Disk);
+    }
+
+    // Tests pour per_bench_baseline()
+    #[test]
+    fn per_bench_baseline_cpu_tests() {
+        assert_eq!(per_bench_baseline("CPU Multi-Core"), Some(80_000_000));
+        assert_eq!(per_bench_baseline("CPU Int Math"), Some(50_000_000));
+        assert_eq!(per_bench_baseline("CPU Float Math"), Some(10_000_000));
+        assert_eq!(per_bench_baseline("CPU Prime Calc"), Some(2_000_000));
+        assert_eq!(per_bench_baseline("CPU SSE Ext"), Some(50_000_000));
+    }
+
+    #[test]
+    fn per_bench_baseline_memory_tests() {
+        assert_eq!(per_bench_baseline("Mem DB Ops"), Some(10_000_000));
+        assert_eq!(per_bench_baseline("Mem Cached Read"), Some(50_000));
+        assert_eq!(per_bench_baseline("Mem Uncached Read"), Some(20_000));
+        assert_eq!(per_bench_baseline("Mem Write"), Some(20_000));
+    }
+
+    #[test]
+    fn per_bench_baseline_disk_tests() {
+        assert_eq!(per_bench_baseline("Disk Seq Read"), Some(500));
+        assert_eq!(per_bench_baseline("Disk Seq Write"), Some(400));
+        assert_eq!(per_bench_baseline("Disk IOPS 32K QD20"), Some(50_000));
+        assert_eq!(per_bench_baseline("Disk IOPS 4K QD1"), Some(10_000));
+    }
+
+    #[test]
+    fn per_bench_baseline_unknown_returns_none() {
+        assert_eq!(per_bench_baseline("Unknown Benchmark"), None);
+    }
+
+    // Tests pour compute_aggregated_scores()
     #[test]
     fn aggregated_scores_respect_weights_and_categories() {
         let scores = vec![
@@ -245,5 +356,59 @@ mod tests {
         assert_eq!(aggregated.cpu, 0);
         assert_eq!(aggregated.mem, 0);
         assert_eq!(aggregated.disk, 0);
+    }
+
+    #[test]
+    fn aggregated_scores_all_categories() {
+        let scores = vec![
+            bench("CPU Multi-Core", 80_000_000, 2),
+            bench("Mem Cached Read", 50_000, 2),
+            bench("Disk Seq Read", 500, 2),
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        // Tous devraient être à 1000 car ils correspondent aux baselines
+        assert_eq!(aggregated.cpu, 1000);
+        assert_eq!(aggregated.mem, 1000);
+        assert_eq!(aggregated.disk, 1000);
+        assert!(aggregated.global > 0);
+    }
+
+    #[test]
+    fn aggregated_scores_weighted_average() {
+        // Deux benchmarks CPU avec des poids différents
+        let scores = vec![
+            bench("CPU Multi-Core", 80_000_000, 3), // normalized: 1000, weight: 3 -> 3000
+            bench("CPU Int Math", 50_000_000, 2),   // normalized: 1000, weight: 2 -> 2000
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        // (3000 + 2000) / (3 + 2) = 5000 / 5 = 1000
+        assert_eq!(aggregated.cpu, 1000);
+    }
+
+    #[test]
+    fn aggregated_scores_capped_at_max() {
+        // Score très élevé devrait être plafonné
+        let scores = vec![
+            bench("CPU Multi-Core", 80_000_000 * 1000, 2), // Très haut score
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        // Doit être plafonné à 999_999
+        assert!(aggregated.global <= 999_999);
+        assert!(aggregated.cpu <= 999_999);
+    }
+
+    #[test]
+    fn aggregated_scores_handles_mixed_categories() {
+        let scores = vec![
+            bench("CPU Multi-Core", 80_000_000, 2),
+            bench("CPU Int Math", 25_000_000, 2),  // 500 normalisé
+            bench("Mem Write", 20_000, 2),
+            bench("Disk Seq Read", 500, 2),
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        // CPU: (1000*2 + 500*2) / (2+2) = (2000 + 1000) / 4 = 750
+        assert_eq!(aggregated.cpu, 750);
+        assert_eq!(aggregated.mem, 1000);
+        assert_eq!(aggregated.disk, 1000);
     }
 }

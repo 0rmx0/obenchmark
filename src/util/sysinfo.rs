@@ -747,3 +747,91 @@ pub fn get_detailed_system_info() -> SystemInfo {
 
     sysinfo
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn human_bytes_zero() {
+        assert_eq!(human_bytes(0.0), "0 B");
+    }
+
+    #[test]
+    fn human_bytes_small_values() {
+        assert_eq!(human_bytes(100.0), "100 B");
+        assert_eq!(human_bytes(1023.0), "1023 B");
+    }
+
+    #[test]
+    fn human_bytes_kilobytes() {
+        assert_eq!(human_bytes(1024.0), "1.00 KB");
+        assert_eq!(human_bytes(2048.0), "2.00 KB");
+    }
+
+    #[test]
+    fn human_bytes_megabytes() {
+        assert_eq!(human_bytes(1024.0 * 1024.0), "1.00 MB");
+        assert_eq!(human_bytes(1024.0 * 1024.0 * 2.5), "2.50 MB");
+    }
+
+    #[test]
+    fn human_bytes_gigabytes() {
+        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0), "1.00 GB");
+        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0 * 5.5), "5.50 GB");
+    }
+
+    #[test]
+    fn human_bytes_terabytes() {
+        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0 * 1024.0), "1.00 TB");
+    }
+
+    #[test]
+    fn human_bytes_very_large() {
+        // Plus que 1 TB
+        let bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0 * 2.5;
+        assert_eq!(human_bytes(bytes), "2.50 TB");
+    }
+
+    #[test]
+    fn human_bytes_fractional() {
+        assert_eq!(human_bytes(1536.0), "1.50 KB");
+    }
+
+    #[test]
+    fn get_system_info_does_not_panic() {
+        // Just make sure it doesn't panic
+        let sys = get_system_info();
+        // Basic sanity checks
+        assert!(sys.cpus().len() > 0);
+    }
+
+    #[test]
+    fn get_detailed_system_info_does_not_panic() {
+        // Just make sure it doesn't panic
+        let sys_info = get_detailed_system_info();
+        // Basic sanity checks
+        assert!(sys_info.cpu.cores_logical > 0);
+        assert!(sys_info.ram.total_mb > 0);
+    }
+
+    #[test]
+    fn get_detailed_system_info_has_expected_structure() {
+        let sys_info = get_detailed_system_info();
+        
+        // Check CPU info
+        assert!(sys_info.cpu.cores_logical >= 1);
+        // cores_physical should be <= cores_logical
+        if let Some(physical) = sys_info.cpu.cores_physical {
+            assert!(physical <= sys_info.cpu.cores_logical);
+        }
+        
+        // Check RAM info
+        assert!(sys_info.ram.total_mb > 0);
+        // Just verify it doesn't panic
+        let _ = sys_info.ram.modules.len();
+        
+        // Just verify it doesn't panic
+        let _ = sys_info.disks.len();
+    }
+}
