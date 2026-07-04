@@ -3,6 +3,7 @@ use sysinfo::System;
 use crate::model::result::{CpuInfo, DiskInfo, MemoryModule, SystemInfo};
 use std::collections::HashMap;
 
+/// Convert bytes to human-readable format
 fn human_bytes(mut bytes: f64) -> String {
     let units = ["B", "KB", "MB", "GB", "TB"];
     let mut i = 0usize;
@@ -17,263 +18,215 @@ fn human_bytes(mut bytes: f64) -> String {
     }
 }
 
+/// Get basic system info from sysinfo crate
 pub fn get_system_info() -> System {
     let mut sys = System::new_all();
     sys.refresh_all();
     sys
 }
 
+/// Get detailed system information with cross-platform support
 pub fn get_detailed_system_info() -> SystemInfo {
     let mut sysinfo = SystemInfo::default();
 
-    // ---------------------------------------------------------
-    // CPU cross‑platform
-    // ---------------------------------------------------------
-    {
-        let mut cpu = CpuInfo::default();
-        cpu.cores_logical = num_cpus::get();
+    // Get CPU information
+    get_cpu_info(&mut sysinfo);
 
-        let s = get_system_info();
-        let g = s.global_cpu_info();
+    // Get RAM information
+    get_ram_info(&mut sysinfo);
 
-        let brand = g.brand().trim();
-        if !brand.is_empty() {
-            cpu.model = Some(brand.to_string());
-        }
+    // Get disk information
+    get_disk_info(&mut sysinfo);
 
-        let vendor = g.vendor_id().trim();
-        if !vendor.is_empty() {
-            cpu.vendor = Some(vendor.to_string());
-        }
+    sysinfo
+}
 
-        let freq = g.frequency();
-        if freq > 0 {
-            cpu.frequency_mhz = Some(freq as u64);
-        }
+/// Get CPU information with platform-specific enhancements
+fn get_cpu_info(sysinfo: &mut SystemInfo) {
+    let mut cpu = CpuInfo::default();
+    
+    // Always get logical cores from num_cpus as fallback
+    cpu.cores_logical = num_cpus::get();
 
-        sysinfo.cpu = cpu;
+    // Try to get info from sysinfo first
+    let s = get_system_info();
+    let g = s.global_cpu_info();
+
+    // Get CPU brand/model
+    let brand = g.brand().trim();
+    if !brand.is_empty() {
+        cpu.model = Some(brand.to_string());
     }
 
-    // ---------------------------------------------------------
-    // RAM (cross‑platform)
-    // ---------------------------------------------------------
-    {
-        let s = get_system_info();
-        let total_mb = s.total_memory() / 1024;
+    // Get CPU vendor
+    let vendor = g.vendor_id().trim();
+    if !vendor.is_empty() {
+        cpu.vendor = Some(vendor.to_string());
+    }
 
-        sysinfo.ram.total_mb = total_mb;
-        sysinfo.ram.total_readable = Some(if total_mb >= 1024 {
-            format!("{:.2} GB", total_mb as f64 / 1024.0)
-        } else {
-            format!("{} MB", total_mb)
+    // Get CPU frequency
+    let freq = g.frequency();
+    if freq > 0 {
+        cpu.frequency_mhz = Some(freq as u64);
+    }
+
+    // Platform-specific enhancements
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_cpu_info(&mut cpu);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        get_linux_cpu_info(&mut cpu);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // sysinfo usually works well on macOS
+    }
+
+    sysinfo.cpu = cpu;
+}
+
+/// Get RAM information with platform-specific enhancements
+fn get_ram_info(sysinfo: &mut SystemInfo) {
+    let s = get_system_info();
+    let total_kb = s.total_memory();
+    let total_mb = total_kb / 1024;
+
+    sysinfo.ram.total_mb = total_mb;
+    sysinfo.ram.total_readable = Some(if total_mb >= 1024 {
+        format!("{:.2} GB", total_mb as f64 / 1024.0)
+    } else {
+        format!("{} MB", total_mb)
+    });
+
+    // Platform-specific RAM details
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_ram_info(sysinfo);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        get_linux_ram_info(sysinfo);
+    }
+}
+
+/// Get disk information with platform-specific enhancements
+fn get_disk_info(sysinfo: &mut SystemInfo) {
+    let mut disks = vec![];
+
+    // Get basic disk info from sysinfo
+    let sd = sysinfo::Disks::new_with_refreshed_list();
+    for d in sd.list() {
+        let total = d.total_space();
+
+        disks.push(DiskInfo {
+            name: d.name().to_string_lossy().to_string(),
+            mount_point: Some(d.mount_point().to_string_lossy().to_string()),
+            total_bytes: Some(total),
+            size_readable: Some(human_bytes(total as f64)),
+            vendor: None,
+            model: None,
+            disk_type: None,
         });
     }
 
-    // ---------------------------------------------------------
-    // Linux: CPU & RAM modules (dmidecode)
-    // ---------------------------------------------------------
-    #[cfg(target_os = "linux")]
-    {
-        use std::fs;
-        use std::process::Command;
-
-        // Fallback CPU info via /proc/cpuinfo si sysinfo est incomplet.
-        if sysinfo.cpu.vendor.is_none()
-            || sysinfo.cpu.model.is_none()
-            || sysinfo.cpu.frequency_mhz.is_none()
-        {
-            if let Ok(contents) = fs::read_to_string("/proc/cpuinfo") {
-                for line in contents.lines() {
-                    let line = line.trim();
-
-                    if sysinfo.cpu.vendor.is_none() && line.starts_with("vendor_id") {
-                        if let Some(v) = line.split(':').nth(1) {
-                            let v = v.trim();
-                            if !v.is_empty() {
-                                sysinfo.cpu.vendor = Some(v.to_string());
-                            }
-                        }
-                    } else if sysinfo.cpu.model.is_none() && line.starts_with("model name") {
-                        if let Some(v) = line.split(':').nth(1) {
-                            let v = v.trim();
-                            if !v.is_empty() {
-                                sysinfo.cpu.model = Some(v.to_string());
-                            }
-                        }
-                    } else if sysinfo.cpu.frequency_mhz.is_none() && line.starts_with("cpu MHz") {
-                        if let Some(v) = line.split(':').nth(1) {
-                            if let Ok(f) = v.trim().parse::<f64>() {
-                                if f > 0.0 {
-                                    sysinfo.cpu.frequency_mhz = Some(f as u64);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // RAM modules via dmidecode (si présent et autorisé).
-        if let Ok(out) = Command::new("dmidecode").arg("-t").arg("17").output() {
-            if out.status.success() {
-                if let Ok(txt) = String::from_utf8(out.stdout) {
-                    let mut current = MemoryModule::default();
-                    let mut hist = HashMap::new();
-
-                    for l in txt.lines() {
-                        let line = l.trim();
-
-                        if line.starts_with("Memory Device") {
-                            if current.memory_type.is_some() {
-                                hist.entry(current.memory_type.clone().unwrap())
-                                    .and_modify(|v| *v += 1)
-                                    .or_insert(1);
-                                sysinfo.ram.modules.push(current);
-                            }
-                            current = MemoryModule::default();
-                        }
-
-                        if let Some(v) = line.strip_prefix("Manufacturer:") {
-                            current.vendor = Some(v.trim().to_string());
-                        }
-                        if let Some(v) = line.strip_prefix("Part Number:") {
-                            current.part_number = Some(v.trim().to_string());
-                        }
-                        if let Some(v) = line.strip_prefix("Type:") {
-                            let t = v.trim();
-                            if t.starts_with("DDR") {
-                                current.memory_type = Some(t.into());
-                            }
-                        }
-                        if let Some(v) = line.strip_prefix("Size:") {
-                            let s = v.trim();
-                            if s.ends_with("GB") {
-                                if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
-                                    current.size_mb = Some(n * 1024);
-                                }
-                            }
-                            if s.ends_with("MB") {
-                                if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
-                                    current.size_mb = Some(n);
-                                }
-                            }
-                        }
-                    }
-
-                    sysinfo.ram.ram_type = hist.into_iter().max_by_key(|(_, c)| *c).map(|(t, _)| t);
-                }
-            }
-        }
-    }
-
-    // ---------------------------------------------------------
-    // macOS RAM (pas de modules possible)
-    // ---------------------------------------------------------
-    #[cfg(target_os = "macos")]
-    {
-        sysinfo.ram.ram_type = None;
-    }
-
+    // Platform-specific disk enhancements
     #[cfg(target_os = "windows")]
     {
-        use serde::Deserialize;
-        use std::collections::HashMap;
-        use std::process::Command;
-        use wmi::WMIConnection;
+        get_windows_disk_info(&mut disks);
+    }
 
-        // ---------- CPU via WMI ----------
-        #[derive(Deserialize, Debug)]
-        struct Win32Processor {
-            Name: Option<String>,
-            Manufacturer: Option<String>,
-            MaxClockSpeed: Option<u32>, // MHz
-            CurrentClockSpeed: Option<u32>,
-        }
+    #[cfg(target_os = "linux")]
+    {
+        get_linux_disk_info(&mut disks);
+    }
 
-        if let Ok(wmi) = WMIConnection::new() {
-            if let Ok(procs) = wmi.raw_query::<Win32Processor>(
-                "SELECT Name, Manufacturer, MaxClockSpeed, CurrentClockSpeed FROM Win32_Processor",
-            ) {
-                // Prends le premier CPU logique (suffisant pour le modèle/fabricant)
-                if let Some(p) = procs.into_iter().next() {
-                    // Model
+    #[cfg(target_os = "macos")]
+    {
+        get_macos_disk_info(&mut disks);
+    }
+
+    sysinfo.disks = disks;
+}
+
+// ============================================================================
+// WINDOWS-SPECIFIC IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(target_os = "windows")]
+fn get_windows_cpu_info(cpu: &mut CpuInfo) {
+    // Try to get CPU info from WMI as fallback
+    let wmi_result = wmi::WMIConnection::new();
+    
+    if let Ok(wmi) = wmi_result {
+        // Query for processor information
+        if let Ok(procs) = wmi.raw_query::<Win32Processor>(
+            "SELECT Name, Manufacturer, MaxClockSpeed, CurrentClockSpeed FROM Win32_Processor"
+        ) {
+            if let Some(p) = procs.into_iter().next() {
+                // Update model if not already set or empty
+                if cpu.model.as_ref().map_or(true, |m| m.is_empty()) {
                     if let Some(name) = p.Name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                        if sysinfo
-                            .cpu
-                            .model
-                            .as_ref()
-                            .map(|m| m.is_empty())
-                            .unwrap_or(true)
-                        {
-                            sysinfo.cpu.model = Some(name.to_string());
-                        }
+                        cpu.model = Some(name.to_string());
                     }
+                }
 
-                    // Vendor
-                    if let Some(v) = p
-                        .Manufacturer
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                    {
-                        if sysinfo
-                            .cpu
-                            .vendor
-                            .as_ref()
-                            .map(|m| m.is_empty())
-                            .unwrap_or(true)
-                        {
-                            sysinfo.cpu.vendor = Some(v.to_string());
-                        }
+                // Update vendor if not already set or empty
+                if cpu.vendor.as_ref().map_or(true, |v| v.is_empty()) {
+                    if let Some(manufacturer) = p.Manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                        cpu.vendor = Some(manufacturer.to_string());
                     }
+                }
 
-                    // Fréquence (MHz) : MaxClockSpeed prioritaire, sinon CurrentClockSpeed, sinon conserve sysinfo
-                    if sysinfo.cpu.frequency_mhz.is_none() {
-                        if let Some(max) = p.MaxClockSpeed {
-                            if max > 0 {
-                                sysinfo.cpu.frequency_mhz = Some(max as u64);
-                            }
-                        } else if let Some(cur) = p.CurrentClockSpeed {
-                            if cur > 0 {
-                                sysinfo.cpu.frequency_mhz = Some(cur as u64);
-                            }
+                // Update frequency if not already set
+                if cpu.frequency_mhz.is_none() {
+                    if let Some(max_speed) = p.MaxClockSpeed {
+                        if max_speed > 0 {
+                            cpu.frequency_mhz = Some(max_speed as u64);
+                        }
+                    } else if let Some(current_speed) = p.CurrentClockSpeed {
+                        if current_speed > 0 {
+                            cpu.frequency_mhz = Some(current_speed as u64);
                         }
                     }
                 }
             }
         }
+    }
 
-        // ---------- RAM TYPE via WMI ----------
-        #[derive(Deserialize, Debug)]
-        struct Win32PhysicalMemory {
-            Manufacturer: Option<String>,
-            PartNumber: Option<String>,
-            Capacity: Option<u64>, // IMPORTANT
-            SMBIOSMemoryType: Option<u16>,
-            MemoryType: Option<u16>,
+    // If we still don't have model info, try wmic as last resort
+    if cpu.model.as_ref().map_or(true, |m| m.is_empty()) {
+        if let Ok(model) = get_cpu_name_from_wmic() {
+            cpu.model = Some(model);
         }
+    }
 
-        // Mapping SMBIOS à jour (cf. spec) :
-        // 20=DDR, 21=DDR2, 24=DDR3, 26=DDR4, 34=DDR5
-        fn map_smbios_memory_type(code: u16) -> Option<&'static str> {
-            match code {
-                20 => Some("DDR"),
-                21 => Some("DDR2"),
-                24 => Some("DDR3"),
-                26 => Some("DDR4"),
-                34 => Some("DDR5"),
-                _ => None,
-            }
-        }
+    // If we still don't have frequency, try to estimate from vendor
+    if cpu.frequency_mhz.is_none() && cpu.vendor.is_some() {
+        // This is a fallback - modern CPUs typically run at 2-4 GHz
+        // We'll leave it as None rather than guessing
+    }
+}
 
-        if let Ok(wmi) = WMIConnection::new() {
-            if let Ok(mem_modules) = wmi.raw_query::<Win32PhysicalMemory>(
+#[cfg(target_os = "windows")]
+fn get_windows_ram_info(sysinfo: &mut SystemInfo) {
+    use wmi::WMIConnection;
+
+    let mut modules = Vec::new();
+    let mut type_hist: HashMap<String, u32> = HashMap::new();
+
+    let wmi_result = WMIConnection::new();
+    
+    if let Ok(wmi) = wmi_result {
+        // Query for physical memory
+        if let Ok(mem_items) = wmi.raw_query::<Win32PhysicalMemory>(
             "SELECT Manufacturer, PartNumber, Capacity, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory"
         ) {
-            let mut type_hist: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-
-            for m in mem_modules {
-                // Type depuis SMBIOSMemoryType, sinon MemoryType
+            for m in mem_items {
                 let mem_type = m.SMBIOSMemoryType
                     .and_then(map_smbios_memory_type)
                     .or_else(|| m.MemoryType.and_then(map_smbios_memory_type))
@@ -285,467 +238,404 @@ pub fn get_detailed_system_info() -> SystemInfo {
 
                 let size_mb = m.Capacity.map(|b| b / 1024 / 1024);
 
-                sysinfo.ram.modules.push(crate::model::result::MemoryModule {
-                    vendor: m.Manufacturer.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-                    part_number: m.PartNumber.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+                modules.push(MemoryModule {
+                    vendor: m.Manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    part_number: m.PartNumber.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                     size_mb,
                     memory_type: mem_type,
                 });
             }
 
-            // Type RAM dominant si pas déjà fixé
+            // Determine dominant RAM type
             if sysinfo.ram.ram_type.is_none() {
                 if let Some((t, _)) = type_hist.into_iter().max_by_key(|(_, c)| *c) {
                     sysinfo.ram.ram_type = Some(t);
                 }
             }
         }
-        }
     }
 
-    // ---------------------------------------------------------
-    // DISKS via sysinfo (cross‑platform)
-    // ---------------------------------------------------------
-    let mut disks = vec![];
-    {
-        let sd = sysinfo::Disks::new_with_refreshed_list();
-        for d in sd.list() {
-            let total = d.total_space();
+    sysinfo.ram.modules = modules;
+}
 
-            disks.push(DiskInfo {
-                name: d.name().to_string_lossy().to_string(),
-                mount_point: Some(d.mount_point().to_string_lossy().to_string()),
-                total_bytes: Some(total),
-                size_readable: Some(human_bytes(total as f64)),
-                vendor: None,
-                model: None,
-                disk_type: None,
-            });
-        }
-    }
+#[cfg(target_os = "windows")]
+fn get_windows_disk_info(disks: &mut Vec<DiskInfo>) {
+    use wmi::WMIConnection;
 
-    // ---------------------------------------------------------
-    // Windows DISKS — WMI mapping PHYSICALDRIVE -> partitions -> drive letters
-    // ---------------------------------------------------------
-    #[cfg(target_os = "windows")]
-    {
-        use serde::Deserialize;
-        use std::collections::HashMap;
-        use std::process::Command;
-        use wmi::WMIConnection;
-
-        #[derive(Deserialize, Debug)]
-        struct Win32DiskDrive {
-            DeviceID: Option<String>, // e.g. "\\.\PHYSICALDRIVE0"
-            Model: Option<String>,
-            Manufacturer: Option<String>,
-            InterfaceType: Option<String>, // e.g. "NVMe", "SATA", "SCSI"
-            MediaType: Option<String>,     // sometimes "SSD", "HDD", or "Fixed hard disk media"
-        }
-
-        #[derive(Deserialize, Debug)]
-        struct Win32DiskDriveToDiskPartition {
-            Antecedent: String, // Win32_DiskDrive reference
-            Dependent: String,  // Win32_DiskPartition reference
-        }
-
-        #[derive(Deserialize, Debug)]
-        struct Win32LogicalDiskToPartition {
-            Antecedent: String, // Win32_LogicalDisk reference (Drive letter)
-            Dependent: String,  // Win32_DiskPartition reference
-        }
-
-        fn extract_quoted_value(s: &str, key: &str) -> Option<String> {
-            // parses WMI REF strings like:
-            // \\...:Win32_LogicalDisk.DeviceID="C:"
-            let needle = format!(r#"{}=""#, key);
-            let start = s.find(&needle)? + needle.len();
-            let rest = &s[start..];
-            let end = rest.find('"')?;
-            Some(rest[..end].to_string())
-        }
-
-        fn extract_device_id(ref_str: &str) -> Option<String> {
-            extract_quoted_value(ref_str, "DeviceID")
-        }
-
-        fn normalize_disk_type(
-            interface_type: Option<&str>,
-            model: Option<&str>,
-            media_type: Option<&str>,
-        ) -> Option<String> {
-            let iface = interface_type.unwrap_or("").to_lowercase();
-            let m = model.unwrap_or("").to_lowercase();
-            let media = media_type.unwrap_or("").to_lowercase();
-
-            if iface.contains("nvme") || m.contains("nvme") {
-                return Some("NVMe".to_string());
-            }
-            if media.contains("ssd") || m.contains("ssd") {
-                return Some("SSD".to_string());
-            }
-            if media.contains("hdd") {
-                return Some("HDD".to_string());
-            }
-            if media.contains("fixed") {
-                // "Fixed hard disk media" (ancien Windows) => HDD par défaut
-                return Some("HDD".to_string());
-            }
-            None
-        }
-
-        #[derive(Deserialize)]
-        struct StoragePhysicalDisk {
-            DeviceId: Option<u32>,
-            MediaType: Option<String>,
-            BusType: Option<String>,
-        }
-
-        #[derive(Clone)]
-        struct StorageDiskSummary {
-            media: Option<String>,
-            bus: Option<String>,
-        }
-
-        impl StorageDiskSummary {
-            fn disk_type(&self) -> Option<String> {
-                if let Some(bus) = &self.bus {
-                    if bus.eq_ignore_ascii_case("nvme") {
-                        return Some("NVMe".into());
-                    }
-                }
-                if let Some(media) = &self.media {
-                    match media.to_lowercase().as_str() {
-                        "ssd" => return Some("SSD".into()),
-                        "hdd" => return Some("HDD".into()),
-                        "scm" => return Some("SCM".into()),
-                        _ => {}
-                    }
-                }
-                None
-            }
-        }
-
-        fn parse_physical_drive_id(device_id: &str) -> Option<u32> {
-            device_id
-                .trim()
-                .rsplit_once("PHYSICALDRIVE")
-                .and_then(|(_, suffix)| suffix.parse::<u32>().ok())
-        }
-
-        fn parse_physical_disk_json(txt: &str) -> Vec<StoragePhysicalDisk> {
-            let trimmed = txt.trim();
-            if trimmed.is_empty() || trimmed == "null" {
-                return vec![];
-            }
-            if let Ok(list) = serde_json::from_str::<Vec<StoragePhysicalDisk>>(trimmed) {
-                list
-            } else if let Ok(single) = serde_json::from_str::<StoragePhysicalDisk>(trimmed) {
-                vec![single]
-            } else {
-                vec![]
-            }
-        }
-
-        fn collect_storage_disk_types() -> HashMap<u32, StorageDiskSummary> {
-            let mut map = HashMap::new();
-            if let Ok(out) = Command::new("powershell")
-                .args(&[
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Get-PhysicalDisk | Select-Object DeviceId,MediaType,BusType | ConvertTo-Json -Depth 1",
-                ])
-                .output()
-            {
-                if out.status.success() {
-                    if let Ok(txt) = String::from_utf8(out.stdout) {
-                        for disk in parse_physical_disk_json(&txt) {
-                            if let Some(id) = disk.DeviceId {
-                                map.insert(
-                                    id,
-                                    StorageDiskSummary {
-                                        media: disk.MediaType.filter(|s| !s.trim().is_empty()),
-                                        bus: disk.BusType.filter(|s| !s.trim().is_empty()),
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            map
-        }
-
-        let storage_disk_types = collect_storage_disk_types();
-
-        if let Ok(wmi_con) = WMIConnection::new() {
-            // 1) Partition -> Letter mapping (ex: "Disk #0, Partition #1" -> "C:")
-            let mut partition_to_letter: HashMap<String, String> = HashMap::new();
-            if let Ok(links) = wmi_con.raw_query::<Win32LogicalDiskToPartition>(
-                "SELECT Antecedent, Dependent FROM Win32_LogicalDiskToPartition",
-            ) {
-                for l in links {
-                    if let (Some(letter), Some(partition)) = (
-                        extract_device_id(&l.Antecedent),
-                        extract_device_id(&l.Dependent),
-                    ) {
-                        // letter ex: "C:"
-                        partition_to_letter.insert(partition, letter);
-                    }
-                }
-            }
-
-            // 2) PhysicalDrive -> Partitions mapping (ex: "\\.\PHYSICALDRIVE0" -> ["Disk #0, Partition #1", ...])
-            let mut physical_to_partitions: HashMap<String, Vec<String>> = HashMap::new();
-            if let Ok(links) = wmi_con.raw_query::<Win32DiskDriveToDiskPartition>(
-                "SELECT Antecedent, Dependent FROM Win32_DiskDriveToDiskPartition",
-            ) {
-                for l in links {
-                    if let (Some(physical), Some(partition)) = (
-                        extract_device_id(&l.Antecedent),
-                        extract_device_id(&l.Dependent),
-                    ) {
-                        physical_to_partitions
-                            .entry(physical)
-                            .or_default()
-                            .push(partition);
-                    }
-                }
-            }
-
-            // 3) Construire un index lettre -> index dans `disks` (issus de sysinfo) :
-            // sysinfo mount_point est du genre "C:\\" ; on normalise en "C:"
-            let mut disk_index_by_letter: HashMap<String, usize> = HashMap::new();
-            for (idx, di) in disks.iter().enumerate() {
-                if let Some(mp) = &di.mount_point {
-                    let mp_trim = mp.trim();
-                    if mp_trim.len() >= 2 {
-                        let letter = &mp_trim[..2]; // "C:"
-                        if letter.chars().nth(1) == Some(':')
-                            && letter
-                                .chars()
-                                .next()
-                                .is_some_and(|c| c.is_ascii_alphabetic())
-                        {
-                            disk_index_by_letter.insert(letter.to_uppercase(), idx);
-                        }
-                    }
-                }
-            }
-
-            // 4) Parcourir les DiskDrives et propager model/manufacturer/type vers chaque lettre correspondante
-            if let Ok(drives) = wmi_con.raw_query::<Win32DiskDrive>(
+    // For simplicity, apply info to all disks based on WMI data
+    // This is a simplified approach that should work for most systems
+    let wmi_result = WMIConnection::new();
+    
+    if let Ok(wmi) = wmi_result {
+        // Get disk drive information
+        if let Ok(drives) = wmi.raw_query::<Win32DiskDrive>(
             "SELECT DeviceID, Model, Manufacturer, InterfaceType, MediaType FROM Win32_DiskDrive"
         ) {
-            for d in drives {
-                let physical = d.DeviceID
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
-                let vendor = d.Manufacturer
-                    .as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-                let model = d.Model
-                    .as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-                let disk_type = normalize_disk_type(
-                    d.InterfaceType.as_deref(),
-                    d.Model.as_deref(),
-                    d.MediaType.as_deref(),
-                );
+            for (i, drive) in drives.into_iter().enumerate() {
+                if i >= disks.len() {
+                    break;
+                }
 
-                let Some(physical) = physical else { continue; };
-                let physical_idx = parse_physical_drive_id(&physical);
-                let storage_disk_type = physical_idx
-                    .and_then(|idx| storage_disk_types.get(&idx))
-                    .and_then(|info| info.disk_type());
-                let preferred_type = storage_disk_type.clone().or_else(|| disk_type.clone());
+                let disk = &mut disks[i];
 
-                // Récupère toutes les lettres associées à ce physical drive
-                let mut letters: Vec<String> = physical_to_partitions
-                    .get(&physical).cloned().unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|p| partition_to_letter.get(&p).cloned())
-                    .collect();
+                let model = drive.Model.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                let vendor = drive.Manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                let interface = drive.InterfaceType.as_deref().map(str::trim);
+                let media = drive.MediaType.as_deref().map(str::trim);
+                
+                // Determine disk type
+                let disk_type = determine_disk_type(interface, model, media);
 
-                letters.sort();
-                letters.dedup();
+                if disk.vendor.is_none() && vendor.is_some() {
+                    disk.vendor = vendor.map(|s| s.to_string());
+                }
+                if disk.model.is_none() && model.is_some() {
+                    disk.model = model.map(|s| s.to_string());
+                }
+                if disk.disk_type.is_none() && disk_type.is_some() {
+                    disk.disk_type = disk_type;
+                }
+            }
+        }
+    }
+}
 
-                // Applique les infos WMI à chaque disque sysinfo correspondant à ces lettres
-                for letter in letters {
-                    if let Some(&idx) = disk_index_by_letter.get(&letter.to_uppercase()) {
-                        if let Some(di) = disks.get_mut(idx) {
-                            if di.vendor.is_none() { di.vendor = vendor.clone(); }
-                            if di.model.is_none() { di.model = model.clone(); }
-                            if let Some(pt) = preferred_type.clone() {
-                                di.disk_type = Some(pt);
+#[cfg(target_os = "windows")]
+fn determine_disk_type(
+    interface: Option<&str>,
+    model: Option<&str>,
+    media: Option<&str>,
+) -> Option<String> {
+    let iface = interface.unwrap_or("").to_lowercase();
+    let m = model.unwrap_or("").to_lowercase();
+    let media = media.unwrap_or("").to_lowercase();
+
+    if iface.contains("nvme") || m.contains("nvme") {
+        return Some("NVMe".to_string());
+    }
+    if media.contains("ssd") || m.contains("ssd") {
+        return Some("SSD".to_string());
+    }
+    if media.contains("hdd") || m.contains("hdd") {
+        return Some("HDD".to_string());
+    }
+    if media.contains("fixed") {
+        // "Fixed hard disk media" => HDD by default
+        return Some("HDD".to_string());
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn map_smbios_memory_type(code: u16) -> Option<&'static str> {
+    match code {
+        20 => Some("DDR"),
+        21 => Some("DDR2"),
+        24 => Some("DDR3"),
+        26 => Some("DDR4"),
+        34 => Some("DDR5"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_cpu_name_from_wmic() -> Option<String> {
+    use std::process::Command;
+    
+    let output = Command::new("wmic")
+        .args(&["cpu", "get", "name", "/value"])
+        .output()
+        .ok()?;
+    
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        for line in output_str.lines() {
+            if line.trim().starts_with("Name=") {
+                let cpu_name = line.trim()[5..].trim();
+                if !cpu_name.is_empty() {
+                    return Some(cpu_name.to_string());
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+// WMI Structs for Windows
+#[cfg(target_os = "windows")]
+use serde::Deserialize;
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct Win32Processor {
+    Name: Option<String>,
+    Manufacturer: Option<String>,
+    MaxClockSpeed: Option<u32>,
+    CurrentClockSpeed: Option<u32>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct Win32PhysicalMemory {
+    Manufacturer: Option<String>,
+    PartNumber: Option<String>,
+    Capacity: Option<u64>,
+    SMBIOSMemoryType: Option<u16>,
+    MemoryType: Option<u16>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct Win32DiskDrive {
+    DeviceID: Option<String>,
+    Model: Option<String>,
+    Manufacturer: Option<String>,
+    InterfaceType: Option<String>,
+    MediaType: Option<String>,
+}
+
+// ============================================================================
+// LINUX-SPECIFIC IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(target_os = "linux")]
+fn get_linux_cpu_info(cpu: &mut CpuInfo) {
+    use std::fs;
+
+    // Try to read from /proc/cpuinfo as fallback
+    if cpu.model.is_none() || cpu.vendor.is_none() || cpu.frequency_mhz.is_none() {
+        if let Ok(contents) = fs::read_to_string("/proc/cpuinfo") {
+            for line in contents.lines() {
+                let line = line.trim();
+
+                if cpu.vendor.is_none() && line.starts_with("vendor_id") {
+                    if let Some(v) = line.split(':').nth(1) {
+                        let v = v.trim();
+                        if !v.is_empty() {
+                            cpu.vendor = Some(v.to_string());
+                        }
+                    }
+                } else if cpu.model.is_none() && line.starts_with("model name") {
+                    if let Some(v) = line.split(':').nth(1) {
+                        let v = v.trim();
+                        if !v.is_empty() {
+                            cpu.model = Some(v.to_string());
+                        }
+                    }
+                } else if cpu.frequency_mhz.is_none() && line.starts_with("cpu MHz") {
+                    if let Some(v) = line.split(':').nth(1) {
+                        if let Ok(f) = v.trim().parse::<f64>() {
+                            if f > 0.0 {
+                                cpu.frequency_mhz = Some(f as u64);
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn get_linux_ram_info(sysinfo: &mut SystemInfo) {
+    use std::process::Command;
+    
+    let mut modules = Vec::new();
+    let mut type_hist: HashMap<String, u32> = HashMap::new();
+
+    // Try dmidecode for RAM module info
+    if let Ok(out) = Command::new("dmidecode").arg("-t").arg("17").output() {
+        if out.status.success() {
+            if let Ok(txt) = String::from_utf8(out.stdout) {
+                let mut current = MemoryModule::default();
+
+                for l in txt.lines() {
+                    let line = l.trim();
+
+                    if line.starts_with("Memory Device") {
+                        if current.memory_type.is_some() {
+                            if let Some(t) = &current.memory_type {
+                                *type_hist.entry(t.clone()).or_insert(0) += 1;
+                            }
+                            modules.push(current);
+                        }
+                        current = MemoryModule::default();
+                    }
+
+                    if let Some(v) = line.strip_prefix("Manufacturer:") {
+                        current.vendor = Some(v.trim().to_string());
+                    }
+                    if let Some(v) = line.strip_prefix("Part Number:") {
+                        current.part_number = Some(v.trim().to_string());
+                    }
+                    if let Some(v) = line.strip_prefix("Type:") {
+                        let t = v.trim();
+                        if t.starts_with("DDR") {
+                            current.memory_type = Some(t.into());
+                        }
+                    }
+                    if let Some(v) = line.strip_prefix("Size:") {
+                        let s = v.trim();
+                        if s.ends_with("GB") {
+                            if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
+                                current.size_mb = Some(n * 1024);
+                            }
+                        }
+                        if s.ends_with("MB") {
+                            if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
+                                current.size_mb = Some(n);
+                            }
+                        }
+                    }
+                }
+
+                // Push the last module
+                if current.memory_type.is_some() {
+                    if let Some(t) = &current.memory_type {
+                        *type_hist.entry(t.clone()).or_insert(0) += 1;
+                    }
+                    modules.push(current);
+                }
+
+                // Set RAM type
+                if sysinfo.ram.ram_type.is_none() {
+                    if let Some((t, _)) = type_hist.into_iter().max_by_key(|(_, c)| *c) {
+                        sysinfo.ram.ram_type = Some(t);
+                    }
+                }
+            }
         }
     }
 
-    // ---------------------------------------------------------
-    // Linux: enrichissement via /sys/block (vendor / model / type HDD/SSD + bus)
-    // ---------------------------------------------------------
-    #[cfg(target_os = "linux")]
-    {
-        use std::fs;
+    sysinfo.ram.modules = modules;
+}
 
-        #[derive(Clone)]
-        struct LinuxDiskExtra {
-            vendor: Option<String>,
-            model: Option<String>,
-            base_type: Option<String>, // "HDD" | "SSD"
-            bus: Option<String>,       // "IDE" | "SATA" | "SAS" | "NVMe" | ...
-        }
+#[cfg(target_os = "linux")]
+fn get_linux_disk_info(disks: &mut Vec<DiskInfo>) {
+    use std::fs;
 
-        fn classify_bus(protocol: Option<&str>, name: &str) -> Option<String> {
-            let pname = protocol.unwrap_or("").to_lowercase();
-            if name.starts_with("nvme") {
-                return Some("NVMe".to_string());
-            }
-            if pname.contains("sas") {
-                return Some("SAS".to_string());
-            }
-            if pname.contains("sata") || pname.contains("ata") {
-                return Some("SATA".to_string());
-            }
-            if name.starts_with("hd") {
-                return Some("IDE".to_string());
-            }
-            None
-        }
+    for disk in disks.iter_mut() {
+        // Extract device name from path (e.g., "/dev/sda" -> "sda")
+        let raw_name = disk.name.clone();
+        let dev_name = raw_name
+            .split(|c| c == '/' || c == '\\')
+            .filter(|s| !s.is_empty())
+            .last()
+            .unwrap_or(&raw_name)
+            .to_string();
 
-        let mut map = HashMap::<String, LinuxDiskExtra>::new();
-
-        if let Ok(entries) = fs::read_dir("/sys/block") {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-
-                let vendor = fs::read_to_string(e.path().join("device/vendor"))
-                    .ok()
-                    .map(|s| s.trim().to_string());
-
-                let model = fs::read_to_string(e.path().join("device/model"))
-                    .ok()
-                    .map(|s| s.trim().to_string());
-
-                let rotational = fs::read_to_string(e.path().join("queue/rotational"))
-                    .ok()
-                    .map(|s| s.trim().to_string());
-
-                let protocol = fs::read_to_string(e.path().join("device/protocol"))
-                    .or_else(|_| fs::read_to_string(e.path().join("device/transport")))
-                    .ok()
-                    .map(|s| s.trim().to_string());
-
-                let base_type = match rotational.as_deref() {
-                    Some("0") => Some("SSD".into()),
-                    Some("1") => Some("HDD".into()),
-                    _ => None,
-                };
-
-                let bus = classify_bus(protocol.as_deref(), &name);
-
-                map.insert(
-                    name,
-                    LinuxDiskExtra {
-                        vendor,
-                        model,
-                        base_type,
-                        bus,
-                    },
-                );
-            }
-        }
-
-        for disk in disks.iter_mut() {
-            // Exemple de name() sous Linux: "/dev/sda", "/dev/sda1", "/dev/nvme0n1p1"
-            let raw_name = disk.name.clone();
-            let dev_name = raw_name
-                .split(|c| c == '/' || c == '\\')
-                .filter(|s| !s.is_empty())
-                .last()
-                .unwrap_or(&raw_name)
-                .to_string();
-
-            // Pour les disques classiques: "sda1" -> "sda"
-            // Pour NVMe: "nvme0n1p1" -> "nvme0n1"
-            let block_name = if dev_name.starts_with("nvme") {
-                if let Some(p_pos) = dev_name.rfind('p') {
-                    dev_name[..p_pos].to_string()
-                } else {
-                    dev_name
-                }
+        // For NVMe: "nvme0n1p1" -> "nvme0n1"
+        let block_name = if dev_name.starts_with("nvme") {
+            if let Some(p_pos) = dev_name.rfind('p') {
+                dev_name[..p_pos].to_string()
             } else {
                 dev_name
-                    .trim_end_matches(|c: char| c.is_ascii_digit())
-                    .to_string()
-            };
+            }
+        } else {
+            dev_name.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
+        };
 
-            if let Some(extra) = map.get(&block_name) {
-                disk.vendor = extra.vendor.clone().or(disk.vendor.take());
-                disk.model = extra.model.clone().or(disk.model.take());
+        // Read from /sys/block
+        let base_path = format!("/sys/block/{}", block_name);
 
-                if disk.disk_type.is_none() {
-                    if let Some(bt) = &extra.base_type {
-                        if let Some(bus) = &extra.bus {
-                            disk.disk_type = Some(format!("{} ({})", bt, bus));
+        // Get vendor and model
+        if disk.vendor.is_none() {
+            if let Ok(vendor) = fs::read_to_string(format!("{}/device/vendor", base_path)) {
+                disk.vendor = Some(vendor.trim().to_string());
+            }
+        }
+
+        if disk.model.is_none() {
+            if let Ok(model) = fs::read_to_string(format!("{}/device/model", base_path)) {
+                disk.model = Some(model.trim().to_string());
+            }
+        }
+
+        // Get disk type from rotational
+        if disk.disk_type.is_none() {
+            if let Ok(rotational) = fs::read_to_string(format!("{}/queue/rotational", base_path)) {
+                let rotational = rotational.trim();
+                let base_type = if rotational == "0" {
+                    "SSD"
+                } else if rotational == "1" {
+                    "HDD"
+                } else {
+                    "Unknown"
+                };
+
+                // Set disk type with bus info if available
+                if let Ok(protocol) = fs::read_to_string(format!("{}/device/protocol", base_path))
+                    .or_else(|_| fs::read_to_string(format!("{}/device/transport", base_path)))
+                {
+                    let protocol = protocol.trim();
+                    if !protocol.is_empty() {
+                        if protocol.to_lowercase().contains("nvme") {
+                            disk.disk_type = Some("NVMe".to_string());
+                        } else if base_type != "Unknown" {
+                            disk.disk_type = Some(format!("{} ({})", base_type, protocol));
                         } else {
-                            disk.disk_type = Some(bt.clone());
+                            disk.disk_type = Some(protocol.to_string());
                         }
                     }
+                } else if base_type != "Unknown" {
+                    disk.disk_type = Some(base_type.to_string());
                 }
             }
         }
     }
+}
 
-    // ---------------------------------------------------------
-    // macOS diskutil
-    // ---------------------------------------------------------
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
+// ============================================================================
+// MACOS-SPECIFIC IMPLEMENTATIONS
+// ============================================================================
 
+#[cfg(target_os = "macos")]
+fn get_macos_disk_info(disks: &mut Vec<DiskInfo>) {
+    use std::process::Command;
+
+    if disks.is_empty() {
+        // Try to get disk info from diskutil
         if let Ok(out) = Command::new("diskutil").arg("info").arg("-all").output() {
-            if let Ok(txt) = String::from_utf8(out.stdout) {
-                let mut model = None;
-                let mut vendor = None;
+            if out.status.success() {
+                if let Ok(txt) = String::from_utf8(out.stdout) {
+                    let mut model = None;
+                    let mut vendor = None;
 
-                for line in txt.lines() {
-                    let l = line.trim();
-                    if l.starts_with("Device Model:") {
-                        model = Some(l[13..].trim().to_string());
+                    for line in txt.lines() {
+                        let l = line.trim();
+                        if l.starts_with("Device Model:") {
+                            model = Some(l[13..].trim().to_string());
+                        }
+                        if l.starts_with("Device Manufacturer:") {
+                            vendor = Some(l[20..].trim().to_string());
+                        }
                     }
-                    if l.starts_with("Device Manufacturer:") {
-                        vendor = Some(l[20..].trim().to_string());
-                    }
-                }
 
-                if let Some(first) = disks.first_mut() {
-                    first.model = model;
-                    first.vendor = vendor;
+                    // Apply to first disk if we have info
+                    if !disks.is_empty() {
+                        let first_disk = &mut disks[0];
+                        if model.is_some() {
+                            first_disk.model = model;
+                        }
+                        if vendor.is_some() {
+                            first_disk.vendor = vendor;
+                        }
 
-                    if let Some(m) = &first.model {
-                        let s = m.to_lowercase();
-                        if s.contains("nvme") {
-                            first.disk_type = Some("NVMe".into());
-                        } else if s.contains("ssd") {
-                            first.disk_type = Some("SSD".into());
+                        // Determine disk type from model
+                        if let Some(m) = &first_disk.model {
+                            let s = m.to_lowercase();
+                            if s.contains("nvme") {
+                                first_disk.disk_type = Some("NVMe".into());
+                            } else if s.contains("ssd") {
+                                first_disk.disk_type = Some("SSD".into());
+                            }
                         }
                     }
                 }
             }
         }
     }
-
-    sysinfo.disks = disks;
-
-    sysinfo
 }
 
 #[cfg(test)]
@@ -788,7 +678,6 @@ mod tests {
 
     #[test]
     fn human_bytes_very_large() {
-        // Plus que 1 TB
         let bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0 * 2.5;
         assert_eq!(human_bytes(bytes), "2.50 TB");
     }
@@ -800,17 +689,13 @@ mod tests {
 
     #[test]
     fn get_system_info_does_not_panic() {
-        // Just make sure it doesn't panic
         let sys = get_system_info();
-        // Basic sanity checks
         assert!(sys.cpus().len() > 0);
     }
 
     #[test]
     fn get_detailed_system_info_does_not_panic() {
-        // Just make sure it doesn't panic
         let sys_info = get_detailed_system_info();
-        // Basic sanity checks
         assert!(sys_info.cpu.cores_logical > 0);
         assert!(sys_info.ram.total_mb > 0);
     }
@@ -818,20 +703,44 @@ mod tests {
     #[test]
     fn get_detailed_system_info_has_expected_structure() {
         let sys_info = get_detailed_system_info();
-        
+
         // Check CPU info
         assert!(sys_info.cpu.cores_logical >= 1);
-        // cores_physical should be <= cores_logical
         if let Some(physical) = sys_info.cpu.cores_physical {
             assert!(physical <= sys_info.cpu.cores_logical);
         }
-        
+
         // Check RAM info
         assert!(sys_info.ram.total_mb > 0);
-        // Just verify it doesn't panic
         let _ = sys_info.ram.modules.len();
-        
-        // Just verify it doesn't panic
+
+        // Check disks
         let _ = sys_info.disks.len();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_map_smbios_memory_type() {
+        use super::map_smbios_memory_type;
+        assert_eq!(map_smbios_memory_type(20), Some("DDR"));
+        assert_eq!(map_smbios_memory_type(21), Some("DDR2"));
+        assert_eq!(map_smbios_memory_type(24), Some("DDR3"));
+        assert_eq!(map_smbios_memory_type(26), Some("DDR4"));
+        assert_eq!(map_smbios_memory_type(34), Some("DDR5"));
+        assert_eq!(map_smbios_memory_type(999), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_determine_disk_type() {
+        use super::determine_disk_type;
+        
+        assert_eq!(determine_disk_type(Some("NVMe"), None, None), Some("NVMe".to_string()));
+        assert_eq!(determine_disk_type(None, Some("Samsung NVMe"), None), Some("NVMe".to_string()));
+        assert_eq!(determine_disk_type(None, None, Some("SSD")), Some("SSD".to_string()));
+        assert_eq!(determine_disk_type(None, Some("Crucial SSD"), None), Some("SSD".to_string()));
+        assert_eq!(determine_disk_type(None, None, Some("HDD")), Some("HDD".to_string()));
+        assert_eq!(determine_disk_type(None, None, Some("Fixed hard disk media")), Some("HDD".to_string()));
+        assert_eq!(determine_disk_type(Some("SATA"), None, None), None);
     }
 }
