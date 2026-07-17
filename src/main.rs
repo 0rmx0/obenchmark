@@ -7,25 +7,19 @@ mod util;
 
 use crate::cli::{CliArgs, CliCommand};
 use clap::Parser;
-use iced::{Application, Settings};
 
-fn main() -> iced::Result {
+fn main() {
     let args = CliArgs::parse();
     if let Some(CliCommand::Cli(opts)) = args.command {
         if let Err(err) = cli::run_cli(opts) {
             eprintln!("error: {}", err);
             std::process::exit(1);
         }
-        return Ok(());
+        return;
     }
 
-    let settings = Settings {
-        window: iced::window::Settings {
-            size: iced::Size::new(960.0, 720.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    app::ui::OBenchmarkApp::run(settings)
+    if let Err(err) = app::ui::run_gui() {
+        eprintln!("error: {}", err);
+        std::process::exit(1);
+    }
 }

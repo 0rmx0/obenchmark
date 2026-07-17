@@ -7,7 +7,7 @@ Open-source cross-platform benchmark tool written in Rust.
 - Detailed memory tests including cached/uncached read, write, latency, availability
 - Disk I/O tests covering sequential read/write and random IOPS at different depths
 - Normalized score system with per-benchmark clamping and 5‑digit final score
-- Beautiful GUI dashboard with progress bars and result export
+- Beautiful Slint GUI dashboard with progress bars and result export
 - Export results as JSON for later analysis
 
 ## Benchmark Tests
