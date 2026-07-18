@@ -1,5 +1,6 @@
 use crate::model::result::BenchResult;
 
+#[derive(Clone)]
 pub enum AppState {
     Idle,
     Running {

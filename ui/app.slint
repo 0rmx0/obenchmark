@@ -1,0 +1,178 @@
+import { Button, VerticalBox, HorizontalBox, ProgressIndicator, ScrollView } from "std-widgets.slint";
+
+export struct ScoreRow {
+    name: string,
+    value: string,
+}
+
+export struct InfoLine {
+    text: string,
+}
+
+export component MainWindow inherits Window {
+    title: "OBenchmark";
+    preferred-width: 960px;
+    preferred-height: 720px;
+    background: #1e1e1e;
+
+    in-out property <string> status: "idle";
+    in-out property <string> current-test: "";
+    in-out property <float> progress: 0.0;
+    in-out property <string> error-message: "";
+
+    in-out property <string> final-score: "";
+    in-out property <string> cpu-score: "";
+    in-out property <string> mem-score: "";
+    in-out property <string> disk-score: "";
+
+    in-out property <[ScoreRow]> scores: [];
+    in-out property <[InfoLine]> system-info: [];
+
+    callback start-clicked();
+    callback export-clicked();
+    callback restart-clicked();
+
+    Rectangle {
+        background: #1e1e1e;
+
+        Image {
+            source: @image-url("../icon.png");
+            opacity: 0.12;
+            image-fit: contain;
+            width: min(parent.width * 0.55, 420px);
+            height: min(parent.height * 0.55, 420px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+
+        VerticalBox {
+            padding: 16px;
+            spacing: 12px;
+
+            if root.status == "idle": VerticalBox {
+                spacing: 12px;
+
+                Button {
+                    text: "Start Benchmark";
+                    clicked => {
+                        root.start-clicked();
+                    }
+                }
+            }
+
+            if root.status == "running": VerticalBox {
+                spacing: 12px;
+
+                Text {
+                    text: "Test en cours : " + root.current-test;
+                    font-size: 20px;
+                    color: #ffffff;
+                }
+
+                ProgressIndicator {
+                    progress: root.progress;
+                }
+            }
+
+            if root.status == "showing": VerticalBox {
+                spacing: 12px;
+                vertical-stretch: 1;
+
+                Text {
+                    text: root.final-score;
+                    font-size: 24px;
+                    color: #ffffff;
+                }
+
+                Text {
+                    text: root.cpu-score;
+                    font-size: 20px;
+                    color: #cccccc;
+                }
+
+                Text {
+                    text: root.mem-score;
+                    font-size: 20px;
+                    color: #cccccc;
+                }
+
+                Text {
+                    text: root.disk-score;
+                    font-size: 20px;
+                    color: #cccccc;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #444444;
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalBox {
+                        spacing: 6px;
+
+                        for score in root.scores: HorizontalBox {
+                            spacing: 8px;
+
+                            Text {
+                                text: score.name;
+                                color: #dddddd;
+                                horizontal-stretch: 2;
+                            }
+
+                            Text {
+                                text: score.value;
+                                color: #dddddd;
+                                horizontal-stretch: 1;
+                                horizontal-alignment: right;
+                            }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: #444444;
+                        }
+
+                        Text {
+                            text: "System info";
+                            font-size: 18px;
+                            color: #ffffff;
+                        }
+
+                        for line in root.system-info: Text {
+                            text: line.text;
+                            color: #bbbbbb;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 10px;
+
+                    Button {
+                        text: "Export JSON";
+                        clicked => {
+                            root.export-clicked();
+                        }
+                    }
+
+                    Button {
+                        text: "Nouvelle analyse";
+                        clicked => {
+                            root.restart-clicked();
+                        }
+                    }
+                }
+            }
+
+            if root.status == "error": Text {
+                text: "Erreur : " + root.error-message;
+                color: #ff6666;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
