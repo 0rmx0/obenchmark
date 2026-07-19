@@ -1,4 +1,13 @@
-import { Button, VerticalBox, HorizontalBox, ProgressIndicator, ScrollView } from "std-widgets.slint";
+import "../ui/fonts/JetBrainsMono-Regular.ttf";
+import "../ui/fonts/JetBrainsMono-Medium.ttf";
+import "../ui/fonts/JetBrainsMono-SemiBold.ttf";
+import "../ui/fonts/JetBrainsMono-Bold.ttf";
+import "../ui/fonts/IBMPlexSans-Regular.ttf";
+import "../ui/fonts/IBMPlexSans-Medium.ttf";
+import "../ui/fonts/IBMPlexSans-SemiBold.ttf";
+import "../ui/fonts/IBMPlexSans-Bold.ttf";
+
+import { ScrollView } from "std-widgets.slint";
 
 export struct ScoreRow {
     name: string,
@@ -9,11 +18,137 @@ export struct InfoLine {
     text: string,
 }
 
+// ---------------------------------------------------------------------
+// Design tokens
+// ---------------------------------------------------------------------
+global Palette {
+    out property <color> bg-void: #050505;
+    out property <color> bg-panel: #0a0a0a;
+    out property <color> bg-panel-hover: #131313;
+    out property <color> border-idle: #262626;
+    out property <color> border-strong: #363636;
+    out property <color> text-dim: #6a6a6a;
+    out property <color> text-mid: #9a9a9a;
+    out property <color> text-bright: #e6e6e6;
+    out property <color> cyan: #2be3ff;
+    out property <color> cyan-dim: #17738a;
+    out property <color> crimson: #c73a4a;
+    out property <color> crimson-dim: #6e2129;
+}
+
+// ---------------------------------------------------------------------
+// Primitives
+// ---------------------------------------------------------------------
+component HairlineDivider inherits Rectangle {
+    height: 1px;
+    background: Palette.border-idle;
+}
+
+component StatusDot inherits Rectangle {
+    in property <color> tone: Palette.text-dim;
+    width: 7px;
+    height: 7px;
+    background: root.tone;
+    border-width: 1px;
+    border-color: root.tone.darker(0.2);
+}
+
+component NoirButton inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Palette.cyan;
+    callback clicked <=> touch.clicked;
+
+    height: 42px;
+    background: touch.pressed ? Palette.bg-void : (touch.has-hover ? Palette.bg-panel-hover : Palette.bg-panel);
+    border-width: 1px;
+    border-color: touch.has-hover ? root.tone : Palette.border-idle;
+    drop-shadow-color: touch.has-hover ? root.tone.with-alpha(0.28) : transparent;
+    drop-shadow-blur: 10px;
+
+    animate background, border-color, drop-shadow-color { duration: 140ms; easing: ease-out; }
+
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            text: root.text;
+            color: touch.has-hover ? root.tone : Palette.text-bright;
+            font-family: "JetBrains Mono";
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            vertical-alignment: center;
+            animate color { duration: 140ms; }
+        }
+    }
+
+    touch := TouchArea { }
+}
+
+component ProgressRail inherits Rectangle {
+    in property <float> progress: 0.0;
+    height: 5px;
+    background: Palette.bg-panel;
+    border-width: 1px;
+    border-color: Palette.border-idle;
+
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        height: parent.height - 2px;
+        width: max(0px, (parent.width - 2px) * root.progress);
+        background: Palette.cyan;
+        drop-shadow-color: Palette.cyan.with-alpha(0.45);
+        drop-shadow-blur: 6px;
+        animate width { duration: 180ms; easing: ease-out; }
+    }
+}
+
+component Readout inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Palette.cyan;
+
+    background: Palette.bg-panel;
+    border-width: 1px;
+    border-color: Palette.border-idle;
+    horizontal-stretch: 1;
+
+    HorizontalLayout {
+        Rectangle {
+            width: 3px;
+            background: root.tone;
+        }
+        VerticalLayout {
+            padding: 14px;
+            alignment: center;
+            Text {
+                text: root.text;
+                color: Palette.text-bright;
+                font-family: "JetBrains Mono";
+                font-size: 14px;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+component SectionLabel inherits Text {
+    font-family: "JetBrains Mono";
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: Palette.text-dim;
+}
+
+// ---------------------------------------------------------------------
+// Main window
+// ---------------------------------------------------------------------
 export component MainWindow inherits Window {
-    title: "OBenchmark";
-    preferred-width: 960px;
-    preferred-height: 720px;
-    background: #1e1e1e;
+    title: "OBENCHMARK";
+    preferred-width: 1040px;
+    preferred-height: 760px;
+    background: Palette.bg-void;
+    default-font-family: "JetBrains Mono";
 
     in-out property <string> status: "idle";
     in-out property <string> current-test: "";
@@ -32,146 +167,306 @@ export component MainWindow inherits Window {
     callback export-clicked();
     callback restart-clicked();
 
-    Rectangle {
-        background: #1e1e1e;
+    property <color> status-tone:
+        root.status == "error" ? Palette.crimson :
+        root.status == "running" ? Palette.cyan :
+        root.status == "showing" ? Palette.cyan : Palette.text-dim;
 
-        Image {
-            source: @image-url("../icon.png");
-            opacity: 0.12;
-            image-fit: contain;
-            width: min(parent.width * 0.55, 420px);
-            height: min(parent.height * 0.55, 420px);
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+    // Base fill
+    Rectangle { background: Palette.bg-void; }
+
+    // Grain texture overlay
+    Image {
+        source: @image-url("../grain.png");
+        width: 100%;
+        height: 100%;
+        image-fit: cover;
+        opacity: 0.05;
+    }
+
+    // Faint watermark logo
+    Image {
+        source: @image-url("../icon.png");
+        opacity: 0.035;
+        image-fit: contain;
+        width: min(parent.width * 0.5, 380px);
+        height: min(parent.height * 0.5, 380px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 18px;
+
+        // ---- Header ----
+        HorizontalLayout {
+            spacing: 14px;
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "OBENCHMARK";
+                    font-family: "JetBrains Mono";
+                    font-size: 20px;
+                    font-weight: 700;
+                    letter-spacing: 4px;
+                    color: Palette.text-bright;
+                }
+                Text {
+                    text: "SYSTEM PERFORMANCE ANALYSIS";
+                    font-family: "IBM Plex Sans";
+                    font-size: 10px;
+                    letter-spacing: 2px;
+                    color: Palette.text-dim;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                StatusDot { tone: root.status-tone; }
+                Text {
+                    text: root.status;
+                    font-family: "JetBrains Mono";
+                    font-size: 11px;
+                    letter-spacing: 2px;
+                    color: root.status-tone;
+                    vertical-alignment: center;
+                }
+            }
         }
 
-        VerticalBox {
-            padding: 16px;
-            spacing: 12px;
+        HairlineDivider { }
 
-            if root.status == "idle": VerticalBox {
-                spacing: 12px;
+        // ---- Body ----
+        Rectangle {
+            vertical-stretch: 1;
 
-                Button {
-                    text: "Start Benchmark";
-                    clicked => {
-                        root.start-clicked();
+            // IDLE
+            if root.status == "idle": VerticalLayout {
+                alignment: center;
+                spacing: 22px;
+
+                Rectangle {
+                    height: 1px;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Text {
+                        text: "READY";
+                        horizontal-alignment: center;
+                        font-family: "JetBrains Mono";
+                        font-size: 13px;
+                        letter-spacing: 3px;
+                        color: Palette.text-dim;
+                    }
+                    Text {
+                        text: "Le systeme est pret pour l'analyse.";
+                        horizontal-alignment: center;
+                        font-family: "IBM Plex Sans";
+                        font-size: 13px;
+                        color: Palette.text-mid;
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    NoirButton {
+                        width: 260px;
+                        text: "INITIER LE BENCHMARK";
+                        tone: Palette.cyan;
+                        clicked => { root.start-clicked(); }
                     }
                 }
             }
 
-            if root.status == "running": VerticalBox {
-                spacing: 12px;
+            // RUNNING
+            if root.status == "running": VerticalLayout {
+                alignment: center;
+                spacing: 18px;
 
-                Text {
-                    text: "Test en cours : " + root.current-test;
-                    font-size: 20px;
-                    color: #ffffff;
+                SectionLabel {
+                    text: "ANALYSE EN COURS";
+                    horizontal-alignment: center;
                 }
 
-                ProgressIndicator {
-                    progress: root.progress;
+                Text {
+                    text: root.current-test;
+                    horizontal-alignment: center;
+                    font-family: "JetBrains Mono";
+                    font-size: 22px;
+                    font-weight: 600;
+                    color: Palette.text-bright;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: min(parent.width, 480px);
+                        ProgressRail { progress: root.progress; }
+                    }
+                }
+
+                Text {
+                    text: "\{Math.round(root.progress * 100)}%";
+                    horizontal-alignment: center;
+                    font-family: "JetBrains Mono";
+                    font-size: 12px;
+                    color: Palette.cyan;
                 }
             }
 
-            if root.status == "showing": VerticalBox {
-                spacing: 12px;
-                vertical-stretch: 1;
+            // SHOWING
+            if root.status == "showing": VerticalLayout {
+                spacing: 16px;
 
-                Text {
-                    text: root.final-score;
-                    font-size: 24px;
-                    color: #ffffff;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Readout { text: root.final-score; tone: Palette.cyan; }
+                    Readout { text: root.cpu-score; tone: Palette.cyan-dim; }
+                    Readout { text: root.mem-score; tone: Palette.cyan-dim; }
+                    Readout { text: root.disk-score; tone: Palette.cyan-dim; }
                 }
 
-                Text {
-                    text: root.cpu-score;
-                    font-size: 20px;
-                    color: #cccccc;
-                }
-
-                Text {
-                    text: root.mem-score;
-                    font-size: 20px;
-                    color: #cccccc;
-                }
-
-                Text {
-                    text: root.disk-score;
-                    font-size: 20px;
-                    color: #cccccc;
-                }
-
-                Rectangle {
-                    height: 1px;
-                    background: #444444;
-                }
+                HairlineDivider { }
 
                 ScrollView {
                     vertical-stretch: 1;
 
-                    VerticalBox {
-                        spacing: 6px;
+                    VerticalLayout {
+                        spacing: 0px;
 
-                        for score in root.scores: HorizontalBox {
-                            spacing: 8px;
+                        SectionLabel {
+                            text: "RESULTATS DETAILLES";
+                        }
 
-                            Text {
-                                text: score.name;
-                                color: #dddddd;
-                                horizontal-stretch: 2;
+                        Rectangle { height: 8px; }
+
+                        for score[i] in root.scores: Rectangle {
+                            height: 34px;
+                            background: Palette.bg-void;
+
+                            HorizontalLayout {
+                                padding-left: 4px;
+                                padding-right: 4px;
+                                Text {
+                                    text: score.name;
+                                    color: Palette.text-mid;
+                                    font-family: "IBM Plex Sans";
+                                    font-size: 13px;
+                                    horizontal-stretch: 2;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: score.value;
+                                    color: Palette.cyan;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
                             }
 
-                            Text {
-                                text: score.value;
-                                color: #dddddd;
-                                horizontal-stretch: 1;
-                                horizontal-alignment: right;
+                            HairlineDivider {
+                                y: parent.height - 1px;
                             }
                         }
+
+                        Rectangle { height: 16px; }
+
+                        SectionLabel {
+                            text: "INFORMATIONS SYSTEME";
+                        }
+
+                        Rectangle { height: 8px; }
 
                         Rectangle {
-                            height: 1px;
-                            background: #444444;
+                            background: Palette.bg-panel;
+                            border-width: 1px;
+                            border-color: Palette.border-idle;
+
+                            VerticalLayout {
+                                padding: 14px;
+                                spacing: 4px;
+
+                                for line in root.system-info: Text {
+                                    text: "> " + line.text;
+                                    color: Palette.text-mid;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
 
-                        Text {
-                            text: "System info";
-                            font-size: 18px;
-                            color: #ffffff;
-                        }
-
-                        for line in root.system-info: Text {
-                            text: line.text;
-                            color: #bbbbbb;
-                            wrap: word-wrap;
-                        }
+                        Rectangle { height: 8px; }
                     }
                 }
 
-                HorizontalBox {
+                HairlineDivider { }
+
+                HorizontalLayout {
                     spacing: 10px;
-
-                    Button {
-                        text: "Export JSON";
-                        clicked => {
-                            root.export-clicked();
-                        }
+                    NoirButton {
+                        text: "EXPORTER JSON";
+                        tone: Palette.cyan;
+                        clicked => { root.export-clicked(); }
                     }
-
-                    Button {
-                        text: "Nouvelle analyse";
-                        clicked => {
-                            root.restart-clicked();
-                        }
+                    NoirButton {
+                        text: "NOUVELLE ANALYSE";
+                        tone: Palette.crimson;
+                        clicked => { root.restart-clicked(); }
                     }
                 }
             }
 
-            if root.status == "error": Text {
-                text: "Erreur : " + root.error-message;
-                color: #ff6666;
-                wrap: word-wrap;
+            // ERROR
+            if root.status == "error": VerticalLayout {
+                alignment: center;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: min(parent.width * 0.8, 520px);
+                        background: Palette.bg-panel;
+                        border-width: 1px;
+                        border-color: Palette.crimson-dim;
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 10px;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                StatusDot { tone: Palette.crimson; }
+                                Text {
+                                    text: "ERREUR SYSTEME";
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                    letter-spacing: 3px;
+                                    color: Palette.crimson;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: root.error-message;
+                                color: Palette.text-mid;
+                                font-family: "IBM Plex Sans";
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
