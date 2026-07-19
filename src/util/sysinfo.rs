@@ -200,7 +200,7 @@ fn get_windows_cpu_info(cpu: &mut CpuInfo) {
 
     // If we still don't have model info, try wmic as last resort
     if cpu.model.as_ref().map_or(true, |m| m.is_empty()) {
-        if let Ok(model) = get_cpu_name_from_wmic() {
+        if let Some(model) = get_cpu_name_from_wmic() {
             cpu.model = Some(model);
         }
     }
