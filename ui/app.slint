@@ -1,11 +1,6 @@
-import "../ui/fonts/JetBrainsMono-Regular.ttf";
-import "../ui/fonts/JetBrainsMono-Medium.ttf";
-import "../ui/fonts/JetBrainsMono-SemiBold.ttf";
-import "../ui/fonts/JetBrainsMono-Bold.ttf";
-import "../ui/fonts/IBMPlexSans-Regular.ttf";
-import "../ui/fonts/IBMPlexSans-Medium.ttf";
-import "../ui/fonts/IBMPlexSans-SemiBold.ttf";
-import "../ui/fonts/IBMPlexSans-Bold.ttf";
+import "../ui/fonts/HelpMe.ttf";
+// Police de marque R_M_X. Nom de famille embarqué dans le fichier : "Help Me"
+// (avec un espace) — c'est ce nom exact qu'il faut utiliser dans font-family ci-dessous.
 
 import { ScrollView } from "std-widgets.slint";
 
@@ -19,21 +14,28 @@ export struct InfoLine {
 }
 
 // ---------------------------------------------------------------------
-// Design tokens
+// Design tokens — Charte graphique R_M_X v2.0 (Dark Streetwear / Horror Punk / Cyberpunk)
 // ---------------------------------------------------------------------
 global Palette {
-    out property <color> bg-void: #050505;
-    out property <color> bg-panel: #0a0a0a;
-    out property <color> bg-panel-hover: #131313;
-    out property <color> border-idle: #262626;
-    out property <color> border-strong: #363636;
-    out property <color> text-dim: #6a6a6a;
-    out property <color> text-mid: #9a9a9a;
-    out property <color> text-bright: #e6e6e6;
-    out property <color> cyan: #2be3ff;
-    out property <color> cyan-dim: #17738a;
-    out property <color> crimson: #c73a4a;
-    out property <color> crimson-dim: #6e2129;
+    // Palette v2
+    out property <color> bg-void: #050505;         // Noir Absolu — fond principal
+    out property <color> bg-panel: #111111;         // Noir Charbon — fond panneaux
+    out property <color> bg-panel-hover: #1c1c1c;   // variation entre Noir Charbon et Gris Anthracite
+    out property <color> border-idle: #232323;      // Gris Anthracite — bordures fines
+    out property <color> border-strong: #3a3a3a;
+    out property <color> text-dim: #6e6b64;         // dérivé grisé du Blanc Cassé
+    out property <color> text-mid: #b3afa4;         // dérivé clair du Blanc Cassé
+    out property <color> text-bright: #f5f2ea;      // Blanc Cassé — texte principal
+
+    out property <color> cyan: #7af9ff;             // Cyan Glacial — accent / glow au survol
+    out property <color> cyan-dim: #3f8a8f;
+    out property <color> rose: #ff7a92;             // Rose Néon — accent secondaire
+    out property <color> rose-dim: #8a4451;
+    out property <color> rouge: #b8323b;            // Rouge Enfer — alerte / danger
+    out property <color> rouge-dim: #5e1a1f;
+
+    // Formes : direction "brutalist composition" / gravure -> coins presque droits
+    out property <length> radius: 2px;
 }
 
 // ---------------------------------------------------------------------
@@ -46,11 +48,24 @@ component HairlineDivider inherits Rectangle {
 
 component StatusDot inherits Rectangle {
     in property <color> tone: Palette.text-dim;
+    in property <bool> pulsing: false;
+
     width: 7px;
     height: 7px;
     background: root.tone;
     border-width: 1px;
     border-color: root.tone.darker(0.2);
+
+    property <bool> pulse-phase: false;
+    drop-shadow-color: root.pulsing ? Palette.cyan.with-alpha(root.pulse-phase ? 0.75 : 0.15) : transparent;
+    drop-shadow-blur: root.pulsing ? (root.pulse-phase ? 9px : 3px) : 0px;
+    animate drop-shadow-color, drop-shadow-blur { duration: 900ms; easing: ease-in-out; }
+
+    Timer {
+        interval: 900ms;
+        running: root.pulsing;
+        triggered => { root.pulse-phase = !root.pulse-phase; }
+    }
 }
 
 component NoirButton inherits Rectangle {
@@ -59,25 +74,28 @@ component NoirButton inherits Rectangle {
     callback clicked <=> touch.clicked;
 
     height: 42px;
+    border-radius: Palette.radius;
     background: touch.pressed ? Palette.bg-void : (touch.has-hover ? Palette.bg-panel-hover : Palette.bg-panel);
     border-width: 1px;
     border-color: touch.has-hover ? root.tone : Palette.border-idle;
-    drop-shadow-color: touch.has-hover ? root.tone.with-alpha(0.28) : transparent;
-    drop-shadow-blur: 10px;
+    // Spec charte v2 (UI) : "Glow cyan au survol" — glow toujours en Cyan Glacial,
+    // indépendamment de la couleur sémantique du bouton (ex: bouton danger en Rouge Enfer).
+    drop-shadow-color: touch.has-hover ? Palette.cyan.with-alpha(0.35) : transparent;
+    drop-shadow-blur: touch.has-hover ? 12px : 0px;
 
-    animate background, border-color, drop-shadow-color { duration: 140ms; easing: ease-out; }
+    animate background, border-color, drop-shadow-color { duration: 200ms; easing: ease; }
 
     HorizontalLayout {
         alignment: center;
         Text {
             text: root.text;
             color: touch.has-hover ? root.tone : Palette.text-bright;
-            font-family: "JetBrains Mono";
+            font-family: "Help Me";
             font-size: 12px;
             font-weight: 600;
             letter-spacing: 2px;
             vertical-alignment: center;
-            animate color { duration: 140ms; }
+            animate color { duration: 200ms; }
         }
     }
 
@@ -87,9 +105,11 @@ component NoirButton inherits Rectangle {
 component ProgressRail inherits Rectangle {
     in property <float> progress: 0.0;
     height: 5px;
+    border-radius: Palette.radius;
     background: Palette.bg-panel;
     border-width: 1px;
     border-color: Palette.border-idle;
+    clip: true;
 
     Rectangle {
         x: 1px;
@@ -97,9 +117,9 @@ component ProgressRail inherits Rectangle {
         height: parent.height - 2px;
         width: max(0px, (parent.width - 2px) * root.progress);
         background: Palette.cyan;
-        drop-shadow-color: Palette.cyan.with-alpha(0.45);
+        drop-shadow-color: Palette.cyan.with-alpha(0.5);
         drop-shadow-blur: 6px;
-        animate width { duration: 180ms; easing: ease-out; }
+        animate width { duration: 200ms; easing: ease; }
     }
 }
 
@@ -110,7 +130,9 @@ component Readout inherits Rectangle {
     background: Palette.bg-panel;
     border-width: 1px;
     border-color: Palette.border-idle;
+    border-radius: Palette.radius;
     horizontal-stretch: 1;
+    clip: true;
 
     HorizontalLayout {
         Rectangle {
@@ -123,7 +145,7 @@ component Readout inherits Rectangle {
             Text {
                 text: root.text;
                 color: Palette.text-bright;
-                font-family: "JetBrains Mono";
+                font-family: "Help Me";
                 font-size: 14px;
                 font-weight: 600;
                 wrap: word-wrap;
@@ -133,11 +155,11 @@ component Readout inherits Rectangle {
 }
 
 component SectionLabel inherits Text {
-    font-family: "JetBrains Mono";
+    font-family: "Help Me";
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 3px;
-    color: Palette.text-dim;
+    color: Palette.text-mid;
 }
 
 // ---------------------------------------------------------------------
@@ -148,7 +170,7 @@ export component MainWindow inherits Window {
     preferred-width: 1040px;
     preferred-height: 760px;
     background: Palette.bg-void;
-    default-font-family: "JetBrains Mono";
+    default-font-family: "Help Me";
 
     in-out property <string> status: "idle";
     in-out property <string> current-test: "";
@@ -168,20 +190,20 @@ export component MainWindow inherits Window {
     callback restart-clicked();
 
     property <color> status-tone:
-        root.status == "error" ? Palette.crimson :
+        root.status == "error" ? Palette.rouge :
         root.status == "running" ? Palette.cyan :
         root.status == "showing" ? Palette.cyan : Palette.text-dim;
 
     // Base fill
     Rectangle { background: Palette.bg-void; }
 
-    // Grain texture overlay
+    // Grain texture overlay — renforcé pour la direction "gravure et hachures" de la v2
     Image {
         source: @image-url("../grain.png");
         width: 100%;
         height: 100%;
         image-fit: cover;
-        opacity: 0.05;
+        opacity: 0.08;
     }
 
     // Faint watermark logo
@@ -207,7 +229,7 @@ export component MainWindow inherits Window {
                 alignment: center;
                 Text {
                     text: "OBENCHMARK";
-                    font-family: "JetBrains Mono";
+                    font-family: "Help Me";
                     font-size: 20px;
                     font-weight: 700;
                     letter-spacing: 4px;
@@ -215,10 +237,10 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: "SYSTEM PERFORMANCE ANALYSIS";
-                    font-family: "IBM Plex Sans";
+                    font-family: "Help Me";
                     font-size: 10px;
                     letter-spacing: 2px;
-                    color: Palette.text-dim;
+                    color: Palette.text-mid;
                 }
             }
 
@@ -227,10 +249,10 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 alignment: center;
                 spacing: 8px;
-                StatusDot { tone: root.status-tone; }
+                StatusDot { tone: root.status-tone; pulsing: root.status == "running"; }
                 Text {
                     text: root.status;
-                    font-family: "JetBrains Mono";
+                    font-family: "Help Me";
                     font-size: 11px;
                     letter-spacing: 2px;
                     color: root.status-tone;
@@ -260,15 +282,15 @@ export component MainWindow inherits Window {
                     Text {
                         text: "READY";
                         horizontal-alignment: center;
-                        font-family: "JetBrains Mono";
+                        font-family: "Help Me";
                         font-size: 13px;
                         letter-spacing: 3px;
-                        color: Palette.text-dim;
+                        color: Palette.text-mid;
                     }
                     Text {
                         text: "Le systeme est pret pour l'analyse.";
                         horizontal-alignment: center;
-                        font-family: "IBM Plex Sans";
+                        font-family: "Help Me";
                         font-size: 13px;
                         color: Palette.text-mid;
                     }
@@ -298,7 +320,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: root.current-test;
                     horizontal-alignment: center;
-                    font-family: "JetBrains Mono";
+                    font-family: "Help Me";
                     font-size: 22px;
                     font-weight: 600;
                     color: Palette.text-bright;
@@ -315,7 +337,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: "\{Math.round(root.progress * 100)}%";
                     horizontal-alignment: center;
-                    font-family: "JetBrains Mono";
+                    font-family: "Help Me";
                     font-size: 12px;
                     color: Palette.cyan;
                 }
@@ -328,9 +350,9 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     spacing: 10px;
                     Readout { text: root.final-score; tone: Palette.cyan; }
-                    Readout { text: root.cpu-score; tone: Palette.cyan-dim; }
-                    Readout { text: root.mem-score; tone: Palette.cyan-dim; }
-                    Readout { text: root.disk-score; tone: Palette.cyan-dim; }
+                    Readout { text: root.cpu-score; tone: Palette.rose-dim; }
+                    Readout { text: root.mem-score; tone: Palette.rose-dim; }
+                    Readout { text: root.disk-score; tone: Palette.rose-dim; }
                 }
 
                 HairlineDivider { }
@@ -357,7 +379,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: score.name;
                                     color: Palette.text-mid;
-                                    font-family: "IBM Plex Sans";
+                                    font-family: "Help Me";
                                     font-size: 13px;
                                     horizontal-stretch: 2;
                                     vertical-alignment: center;
@@ -365,7 +387,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: score.value;
                                     color: Palette.cyan;
-                                    font-family: "JetBrains Mono";
+                                    font-family: "Help Me";
                                     font-size: 13px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
@@ -391,6 +413,8 @@ export component MainWindow inherits Window {
                             background: Palette.bg-panel;
                             border-width: 1px;
                             border-color: Palette.border-idle;
+                            border-radius: Palette.radius;
+                            clip: true;
 
                             VerticalLayout {
                                 padding: 14px;
@@ -399,7 +423,7 @@ export component MainWindow inherits Window {
                                 for line in root.system-info: Text {
                                     text: "> " + line.text;
                                     color: Palette.text-mid;
-                                    font-family: "JetBrains Mono";
+                                    font-family: "Help Me";
                                     font-size: 12px;
                                     wrap: word-wrap;
                                 }
@@ -421,7 +445,7 @@ export component MainWindow inherits Window {
                     }
                     NoirButton {
                         text: "NOUVELLE ANALYSE";
-                        tone: Palette.crimson;
+                        tone: Palette.rouge;
                         clicked => { root.restart-clicked(); }
                     }
                 }
@@ -438,7 +462,9 @@ export component MainWindow inherits Window {
                         width: min(parent.width * 0.8, 520px);
                         background: Palette.bg-panel;
                         border-width: 1px;
-                        border-color: Palette.crimson-dim;
+                        border-color: Palette.rouge-dim;
+                        border-radius: Palette.radius;
+                        clip: true;
 
                         VerticalLayout {
                             padding: 20px;
@@ -446,13 +472,13 @@ export component MainWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                StatusDot { tone: Palette.crimson; }
+                                StatusDot { tone: Palette.rouge; }
                                 Text {
                                     text: "ERREUR SYSTEME";
-                                    font-family: "JetBrains Mono";
+                                    font-family: "Help Me";
                                     font-size: 12px;
                                     letter-spacing: 3px;
-                                    color: Palette.crimson;
+                                    color: Palette.rouge;
                                     vertical-alignment: center;
                                 }
                             }
@@ -460,7 +486,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: root.error-message;
                                 color: Palette.text-mid;
-                                font-family: "IBM Plex Sans";
+                                font-family: "Help Me";
                                 font-size: 13px;
                                 wrap: word-wrap;
                             }
