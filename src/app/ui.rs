@@ -181,6 +181,10 @@ fn apply_state_to_ui(ui: &MainWindow, state: &AppState) {
                 "Score Disque : {}",
                 result.disk_score
             )));
+            ui.set_gfx_score(SharedString::from(format!(
+                "Score GFX : {}",
+                result.gfx_score
+            )));
             ui.set_scores(build_score_model(result));
             ui.set_system_info(build_system_info_model(result));
         }
@@ -296,6 +300,8 @@ fn unit_for_bench(name: &str) -> &'static str {
         "Mem Latency" => "accès/s",
         "Disk Seq Read" | "Disk Seq Write" => "MB/s",
         "Disk IOPS 32K QD20" | "Disk IOPS 4K QD1" => "IOPS",
+        "GFX 2D Raster" => "MPix/s",
+        "GFX 3D Raster" => "tris/s",
         _ => "",
     }
 }

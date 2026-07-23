@@ -6,6 +6,7 @@ Open-source cross-platform benchmark tool written in Rust.
 - CPU multi-core real benchmark (several subtests described below)
 - Detailed memory tests including cached/uncached read, write, latency, availability
 - Disk I/O tests covering sequential read/write and random IOPS at different depths
+- Software-rendered 2D/3D graphics tests (alpha compositing, triangle rasterization)
 - Normalized score system with per-benchmark clamping and 5‑digit final score
 - Beautiful Slint GUI dashboard with progress bars and result export
 - Export results as JSON for later analysis
@@ -39,6 +40,10 @@ Each run executes a suite of individual benchmarks; results are normalized and w
 - **IOPS 32K QD20**: random 32 KB ops with queue depth 20.
 - **IOPS 4K QD1**: random 4 KB ops single queued.
 
+### GFX tests
+- **2D Raster**: repeated decode + alpha-blend compositing of the app's own grain texture onto a framebuffer, measured in megapixels/s.
+- **3D Raster**: software vertex transform + triangle rasterization (with z-buffer) of a procedurally generated mesh, measured in triangles/s. Fully CPU-side, no GPU/driver dependency, to stay consistent with the rest of the headless suite.
+
 ## Scoring
 Raw results are normalized against predefined baselines per category. Each normalized value is capped to 10 000 to avoid outliers skewing the average. Scores are weighted, averaged, and finally clamped to at most five decimal digits (≤ 99999) to produce the final score shown in the GUI. This ensures reproducible, comparable numbers across different hardware.
 
@@ -54,4 +59,4 @@ You can run the same benchmark suite without the GUI with `obenchmark cli` (or `
 - `--export <file>` saves the serialized result to `file`.
 - The CLI shows a progress bar that reports the current benchmark and the number completed, so you can watch execution even outside the GUI.
 
-The CLI still reports final, CPU, RAM and disk scores plus system information, so you can script repeated runs or integrate the tool into CI.
+The CLI still reports final, CPU, RAM, disk and GFX scores plus system information, so you can script repeated runs or integrate the tool into CI.

@@ -164,6 +164,7 @@ fn print_summary(result: &BenchResult) {
     println!("  CPU score:    {}", result.cpu_score);
     println!("  RAM score:    {}", result.mem_score);
     println!("  Disk score:   {}", result.disk_score);
+    println!("  GFX score:    {}", result.gfx_score);
 
     if let Some(info) = &result.system_info {
         println!("System information:");

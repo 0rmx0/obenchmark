@@ -5,6 +5,7 @@ use crate::model::result::BenchScore;
 const CPU_BASELINE: u64 = 50_000_000;
 const MEM_BASELINE: u64 = 5000;
 const DISK_BASELINE: u64 = 1000;
+const GFX_BASELINE: u64 = 200;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AggregatedScores {
@@ -12,6 +13,7 @@ pub struct AggregatedScores {
     pub cpu: u64,
     pub mem: u64,
     pub disk: u64,
+    pub gfx: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +21,7 @@ enum BenchClass {
     Cpu,
     Mem,
     Disk,
+    Gfx,
     Other,
 }
 
@@ -57,6 +60,10 @@ fn per_bench_baseline(name: &str) -> Option<u64> {
         "Disk IOPS 32K QD20" => Some(50_000),
         "Disk IOPS 4K QD1" => Some(10_000),
 
+        // Graphisme (2D: mégapixels/s, 3D: triangles/s)
+        "GFX 2D Raster" => Some(300),
+        "GFX 3D Raster" => Some(3_000_000),
+
         _ => None,
     }
 }
@@ -72,6 +79,8 @@ pub fn normalize(name: &str, raw_score: u64) -> u64 {
             MEM_BASELINE
         } else if lower.contains("disk") || lower.contains("iops") {
             DISK_BASELINE
+        } else if lower.contains("gfx") || lower.contains("graphic") {
+            GFX_BASELINE
         } else {
             1000
         }
@@ -107,6 +116,9 @@ fn classify(name: &str) -> BenchClass {
             BenchClass::Disk
         }
 
+        // Graphisme (2D/3D)
+        "GFX 2D Raster" | "GFX 3D Raster" => BenchClass::Gfx,
+
         // Fallback pour d'éventuels nouveaux noms
         _ => {
             let lower = name.to_lowercase();
@@ -116,6 +128,8 @@ fn classify(name: &str) -> BenchClass {
                 BenchClass::Mem
             } else if lower.contains("disk") || lower.contains("iops") {
                 BenchClass::Disk
+            } else if lower.contains("gfx") || lower.contains("graphic") {
+                BenchClass::Gfx
             } else {
                 BenchClass::Other
             }
@@ -136,6 +150,9 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
 
     let mut total_weight_disk: u128 = 0;
     let mut total_score_disk: u128 = 0;
+
+    let mut total_weight_gfx: u128 = 0;
+    let mut total_score_gfx: u128 = 0;
 
     for s in scores {
         let normalized = normalize(&s.name, s.raw_score) as u128;
@@ -164,6 +181,10 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
                 total_score_disk =
                     total_score_disk.saturating_add(normalized.saturating_mul(weight));
                 total_weight_disk = total_weight_disk.saturating_add(weight);
+            }
+            BenchClass::Gfx => {
+                total_score_gfx = total_score_gfx.saturating_add(normalized.saturating_mul(weight));
+                total_weight_gfx = total_weight_gfx.saturating_add(weight);
             }
             BenchClass::Other => {}
         }
@@ -194,6 +215,7 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
         cpu: compute_avg(total_score_cpu, total_weight_cpu),
         mem: compute_avg(total_score_mem, total_weight_mem),
         disk: compute_avg(total_score_disk, total_weight_disk),
+        gfx: compute_avg(total_score_gfx, total_weight_gfx),
     }
 }
 
@@ -290,6 +312,29 @@ mod tests {
         assert_eq!(classify("Disk Seq Write"), BenchClass::Disk);
         assert_eq!(classify("Disk IOPS 32K QD20"), BenchClass::Disk);
         assert_eq!(classify("Disk IOPS 4K QD1"), BenchClass::Disk);
+    }
+
+    #[test]
+    fn classify_gfx_benchmarks() {
+        assert_eq!(classify("GFX 2D Raster"), BenchClass::Gfx);
+        assert_eq!(classify("GFX 3D Raster"), BenchClass::Gfx);
+    }
+
+    #[test]
+    fn normalize_gfx_baseline_reference() {
+        assert_eq!(normalize("GFX 2D Raster", 300), 1000);
+        assert_eq!(normalize("GFX 3D Raster", 3_000_000), 1000);
+    }
+
+    #[test]
+    fn aggregated_scores_include_gfx_category() {
+        let scores = vec![
+            bench("GFX 2D Raster", 300, 3),
+            bench("GFX 3D Raster", 3_000_000, 3),
+        ];
+        let aggregated = compute_aggregated_scores(&scores);
+        assert_eq!(aggregated.gfx, 1000);
+        assert_eq!(aggregated.cpu, 0);
     }
 
     #[test]

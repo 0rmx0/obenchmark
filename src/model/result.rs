@@ -17,6 +17,8 @@ pub struct BenchResult {
     pub mem_score: u64,
     #[serde(default)]
     pub disk_score: u64,
+    #[serde(default)]
+    pub gfx_score: u64,
     pub system_info: Option<SystemInfo>,
 }
 

@@ -1,4 +1,4 @@
-use crate::benchmarks::{cpu, disk, memory};
+use crate::benchmarks::{cpu, disk, graphics, memory};
 use crate::engines::benchmark::Benchmark;
 
 /// Describes a benchmark that can be instantiated on demand.
@@ -100,6 +100,14 @@ pub const AVAILABLE_BENCHMARKS: &[BenchSpec] = &[
         name: "Disk IOPS 4K QD1",
         builder: build_disk_iops_4k,
     },
+    BenchSpec {
+        name: "GFX 2D Raster",
+        builder: build_gfx_2d_raster,
+    },
+    BenchSpec {
+        name: "GFX 3D Raster",
+        builder: build_gfx_3d_raster,
+    },
 ];
 
 pub fn default_suite() -> Vec<Box<dyn Benchmark>> {
@@ -191,6 +199,14 @@ fn build_disk_iops_32k() -> Box<dyn Benchmark> {
 
 fn build_disk_iops_4k() -> Box<dyn Benchmark> {
     Box::new(disk::DiskRandomIOPS4K)
+}
+
+fn build_gfx_2d_raster() -> Box<dyn Benchmark> {
+    Box::new(graphics::Gfx2DRaster)
+}
+
+fn build_gfx_3d_raster() -> Box<dyn Benchmark> {
+    Box::new(graphics::Gfx3DRaster)
 }
 
 #[cfg(test)]
@@ -390,6 +406,20 @@ mod tests {
     }
 
     #[test]
+    fn test_gfx_2d_raster_builder() {
+        let bench = build_gfx_2d_raster();
+        assert_eq!(bench.name(), "GFX 2D Raster");
+        assert_eq!(bench.weight(), 3);
+    }
+
+    #[test]
+    fn test_gfx_3d_raster_builder() {
+        let bench = build_gfx_3d_raster();
+        assert_eq!(bench.name(), "GFX 3D Raster");
+        assert_eq!(bench.weight(), 3);
+    }
+
+    #[test]
     fn test_all_benchmarks_can_be_built() {
         for spec in AVAILABLE_BENCHMARKS {
             let bench = spec.build();
@@ -401,8 +431,17 @@ mod tests {
 
     #[test]
     fn test_benchmark_count() {
-        // CPU: 10, Memory: 7, Disk: 4 = 21 total
-        assert_eq!(AVAILABLE_BENCHMARKS.len(), 21);
+        // CPU: 10, Memory: 7, Disk: 4, GFX: 2 = 23 total
+        assert_eq!(AVAILABLE_BENCHMARKS.len(), 23);
+    }
+
+    #[test]
+    fn test_gfx_benchmarks_count() {
+        let gfx_benchmarks: Vec<_> = AVAILABLE_BENCHMARKS
+            .iter()
+            .filter(|s| s.name.starts_with("GFX"))
+            .collect();
+        assert_eq!(gfx_benchmarks.len(), 2);
     }
 
     #[test]

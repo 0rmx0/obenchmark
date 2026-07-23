@@ -181,6 +181,7 @@ export component MainWindow inherits Window {
     in-out property <string> cpu-score: "";
     in-out property <string> mem-score: "";
     in-out property <string> disk-score: "";
+    in-out property <string> gfx-score: "";
 
     in-out property <[ScoreRow]> scores: [];
     in-out property <[InfoLine]> system-info: [];
@@ -353,6 +354,7 @@ export component MainWindow inherits Window {
                     Readout { text: root.cpu-score; tone: Palette.rose-dim; }
                     Readout { text: root.mem-score; tone: Palette.rose-dim; }
                     Readout { text: root.disk-score; tone: Palette.rose-dim; }
+                    Readout { text: root.gfx-score; tone: Palette.rose-dim; }
                 }
 
                 HairlineDivider { }

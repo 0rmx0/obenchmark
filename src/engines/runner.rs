@@ -178,6 +178,7 @@ pub fn build_bench_result(scores: Vec<BenchScore>) -> BenchResult {
         cpu_score: aggregated.cpu,
         mem_score: aggregated.mem,
         disk_score: aggregated.disk,
+        gfx_score: aggregated.gfx,
         system_info: Some(system_info),
     }
 }
