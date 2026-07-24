@@ -32,18 +32,29 @@ fn per_bench_baseline(name: &str) -> Option<u64> {
         #[cfg(test)]
         "Test Zero Baseline" => Some(0),
         // CPU (ops/s ou dérivés)
-        "CPU Multi-Core" => Some(80_000_000),
-        "CPU Int Math" => Some(50_000_000),
-        "CPU Float Math" => Some(10_000_000),
-        "CPU Prime Calc" => Some(2_000_000),
-        "CPU SSE Ext" => Some(50_000_000),
+        //
+        // NOTE DE CALIBRAGE : ces baselines ont été recalculées suite à la
+        // refonte des noyaux de calcul dans `cpu.rs` (voir la doc de
+        // module de ce fichier) : chaînes indépendantes exposant l'ILP
+        // pour Int/Float Math, noyau SAXPY pour SSE Ext, crible
+        // d'Ératosthène pour Prime Calc, etc. Ces nouvelles charges de
+        // travail ne produisent pas les mêmes ordres de grandeur que les
+        // anciennes boucles ad hoc ; comme pour les valeurs d'origine, ce
+        // sont des ordres de grandeur raisonnables et non des mesures
+        // certifiées sur un parc de machines de référence — à ajuster une
+        // fois des mesures réelles disponibles sur du matériel varié.
+        "CPU Multi-Core" => Some(600_000_000),
+        "CPU Int Math" => Some(800_000_000),
+        "CPU Float Math" => Some(40_000_000),
+        "CPU Prime Calc" => Some(400), // passes de crible/s (tampon de 1M entiers)
+        "CPU SSE Ext" => Some(400_000_000),
         // CPU en MB/s
         "CPU Compression" => Some(500),
         "CPU Encryption" => Some(500),
         // CPU divers
         "CPU Physics" => Some(100_000_000),
         "CPU Sorting" => Some(50_000_000),
-        "CPU UCT Single" => Some(10_000_000),
+        "CPU UCT Single" => Some(4_000_000), // playouts UCT/s
 
         // Mémoire
         "Mem DB Ops" => Some(10_000_000),    // ops/s approx
@@ -234,17 +245,17 @@ mod tests {
     // Tests pour normalize()
     #[test]
     fn normalize_cpu_baseline_hits_reference() {
-        assert_eq!(normalize("CPU Multi-Core", 80_000_000), 1000);
+        assert_eq!(normalize("CPU Multi-Core", 600_000_000), 1000);
     }
 
     #[test]
     fn normalize_cpu_int_math_reference() {
-        assert_eq!(normalize("CPU Int Math", 50_000_000), 1000);
+        assert_eq!(normalize("CPU Int Math", 800_000_000), 1000);
     }
 
     #[test]
     fn normalize_cpu_float_math_reference() {
-        assert_eq!(normalize("CPU Float Math", 10_000_000), 1000);
+        assert_eq!(normalize("CPU Float Math", 40_000_000), 1000);
     }
 
     #[test]
@@ -271,7 +282,7 @@ mod tests {
     #[test]
     fn normalize_caps_at_max() {
         // Score très élevé devrait être plafonné à 100_000
-        let value = normalize("CPU Multi-Core", 80_000_000 * 100);
+        let value = normalize("CPU Multi-Core", 600_000_000 * 100);
         assert_eq!(value, 100_000);
     }
 
@@ -352,11 +363,11 @@ mod tests {
     // Tests pour per_bench_baseline()
     #[test]
     fn per_bench_baseline_cpu_tests() {
-        assert_eq!(per_bench_baseline("CPU Multi-Core"), Some(80_000_000));
-        assert_eq!(per_bench_baseline("CPU Int Math"), Some(50_000_000));
-        assert_eq!(per_bench_baseline("CPU Float Math"), Some(10_000_000));
-        assert_eq!(per_bench_baseline("CPU Prime Calc"), Some(2_000_000));
-        assert_eq!(per_bench_baseline("CPU SSE Ext"), Some(50_000_000));
+        assert_eq!(per_bench_baseline("CPU Multi-Core"), Some(600_000_000));
+        assert_eq!(per_bench_baseline("CPU Int Math"), Some(800_000_000));
+        assert_eq!(per_bench_baseline("CPU Float Math"), Some(40_000_000));
+        assert_eq!(per_bench_baseline("CPU Prime Calc"), Some(400));
+        assert_eq!(per_bench_baseline("CPU SSE Ext"), Some(400_000_000));
     }
 
     #[test]
@@ -384,7 +395,7 @@ mod tests {
     #[test]
     fn aggregated_scores_respect_weights_and_categories() {
         let scores = vec![
-            bench("CPU Multi-Core", 80_000_000, 2),
+            bench("CPU Multi-Core", 600_000_000, 2),
             bench("Mem Write", 20_000, 3),
         ];
         let aggregated = compute_aggregated_scores(&scores);
@@ -406,7 +417,7 @@ mod tests {
     #[test]
     fn aggregated_scores_all_categories() {
         let scores = vec![
-            bench("CPU Multi-Core", 80_000_000, 2),
+            bench("CPU Multi-Core", 600_000_000, 2),
             bench("Mem Cached Read", 50_000, 2),
             bench("Disk Seq Read", 500, 2),
         ];
@@ -422,8 +433,8 @@ mod tests {
     fn aggregated_scores_weighted_average() {
         // Deux benchmarks CPU avec des poids différents
         let scores = vec![
-            bench("CPU Multi-Core", 80_000_000, 3), // normalized: 1000, weight: 3 -> 3000
-            bench("CPU Int Math", 50_000_000, 2),   // normalized: 1000, weight: 2 -> 2000
+            bench("CPU Multi-Core", 600_000_000, 3), // normalized: 1000, weight: 3 -> 3000
+            bench("CPU Int Math", 800_000_000, 2),   // normalized: 1000, weight: 2 -> 2000
         ];
         let aggregated = compute_aggregated_scores(&scores);
         // (3000 + 2000) / (3 + 2) = 5000 / 5 = 1000
@@ -434,7 +445,7 @@ mod tests {
     fn aggregated_scores_capped_at_max() {
         // Score très élevé devrait être plafonné
         let scores = vec![
-            bench("CPU Multi-Core", 80_000_000 * 1000, 2), // Très haut score
+            bench("CPU Multi-Core", 600_000_000 * 1000, 2), // Très haut score
         ];
         let aggregated = compute_aggregated_scores(&scores);
         // Doit être plafonné à 999_999
@@ -445,8 +456,8 @@ mod tests {
     #[test]
     fn aggregated_scores_handles_mixed_categories() {
         let scores = vec![
-            bench("CPU Multi-Core", 80_000_000, 2),
-            bench("CPU Int Math", 25_000_000, 2),  // 500 normalisé
+            bench("CPU Multi-Core", 600_000_000, 2),
+            bench("CPU Int Math", 400_000_000, 2),  // 500 normalisé
             bench("Mem Write", 20_000, 2),
             bench("Disk Seq Read", 500, 2),
         ];
