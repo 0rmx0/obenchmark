@@ -137,6 +137,22 @@ fn apply_event(state: AppState, event: RunnerEvent) -> AppState {
                 state
             }
         }
+        RunnerEvent::BenchFinishedWithSamples(_, _) => {
+            if let AppState::Running {
+                current_test,
+                completed,
+                total,
+            } = state
+            {
+                AppState::Running {
+                    current_test,
+                    completed: completed + 1,
+                    total,
+                }
+            } else {
+                state
+            }
+        }
         RunnerEvent::Done(result) => AppState::Showing(result),
         RunnerEvent::Error(e) => AppState::Error(e),
     }

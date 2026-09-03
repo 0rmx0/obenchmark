@@ -5,8 +5,19 @@ use anyhow::Result;
 use image::GenericImageView;
 
 use crate::engines::benchmark::Benchmark;
+use crate::model::result::SampleResult;
 
-const GFX_BENCH_DURATION: Duration = Duration::from_secs(5);
+/// Durée de la phase d'échauffement (non mesurée) exécutée avant chaque
+/// série d'échantillons.
+const WARMUP_DURATION: Duration = Duration::from_millis(500);
+
+/// Durée d'un échantillon de mesure individuel.
+const SAMPLE_DURATION: Duration = Duration::from_secs(2);
+
+/// Nombre d'échantillons indépendants dont la médiane constitue le score
+/// final d'un test.
+const SAMPLE_COUNT: usize = 5;
+
 const MIN_ELAPSED_SEC: f64 = 1e-6;
 
 // Texture embarquée à la compilation : la trame "grain" déjà utilisée par la
@@ -28,22 +39,20 @@ impl Benchmark for Gfx2DRaster {
         3
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let source = image::load_from_memory(GRAIN_TEXTURE_BYTES)?;
         let (src_w, src_h) = source.dimensions();
         let src_rgba = source.to_rgba8();
 
         const FB_W: u32 = 960;
         const FB_H: u32 = 540;
+
+        // Phase d'échauffement
         let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
-
-        let start = Instant::now();
-        let mut pixels_composited: u64 = 0;
+        let warmup_start = Instant::now();
         let mut frame: u32 = 0;
-
-        while start.elapsed() < GFX_BENCH_DURATION {
-            // Décalage procédural par frame pour éviter tout cache trivial
-            // et simuler une texture qui "dérive" (grain animé).
+        
+        while warmup_start.elapsed() < WARMUP_DURATION {
             let offset_x = (frame.wrapping_mul(7)) % src_w.max(1);
             let offset_y = (frame.wrapping_mul(13)) % src_h.max(1);
 
@@ -57,26 +66,59 @@ impl Benchmark for Gfx2DRaster {
                     let alpha = px[3] as u32;
                     let inv_alpha = 255 - alpha;
 
-                    // Alpha-blend manuel (pas d'accélération GPU) : c'est le
-                    // coeur du travail mesuré ici.
                     for c in 0..3 {
                         let src_c = px[c] as u32;
                         let dst_c = framebuffer[idx + c] as u32;
-                        framebuffer[idx + c] =
-                            ((src_c * alpha + dst_c * inv_alpha) / 255) as u8;
+                        framebuffer[idx + c] = ((src_c * alpha + dst_c * inv_alpha) / 255) as u8;
                     }
                     framebuffer[idx + 3] = 255;
                 }
             }
-
-            pixels_composited += (FB_W * FB_H) as u64;
             frame = frame.wrapping_add(1);
         }
 
-        black_box(&framebuffer);
-        let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
-        let megapixels_per_sec = (pixels_composited as f64 / 1_000_000.0) / elapsed;
-        Ok(megapixels_per_sec as u64)
+        // Échantillonnage
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+            let start = Instant::now();
+            let mut pixels_composited: u64 = 0;
+            let mut frame: u32 = 0;
+
+            while start.elapsed() < SAMPLE_DURATION {
+                let offset_x = (frame.wrapping_mul(7)) % src_w.max(1);
+                let offset_y = (frame.wrapping_mul(13)) % src_h.max(1);
+
+                for y in 0..FB_H {
+                    let sy = (y + offset_y) % src_h.max(1);
+                    for x in 0..FB_W {
+                        let sx = (x + offset_x) % src_w.max(1);
+                        let px = src_rgba.get_pixel(sx, sy);
+
+                        let idx = ((y * FB_W + x) * 4) as usize;
+                        let alpha = px[3] as u32;
+                        let inv_alpha = 255 - alpha;
+
+                        for c in 0..3 {
+                            let src_c = px[c] as u32;
+                            let dst_c = framebuffer[idx + c] as u32;
+                            framebuffer[idx + c] = ((src_c * alpha + dst_c * inv_alpha) / 255) as u8;
+                        }
+                        framebuffer[idx + 3] = 255;
+                    }
+                }
+
+                pixels_composited += (FB_W * FB_H) as u64;
+                frame = frame.wrapping_add(1);
+            }
+
+            black_box(&framebuffer);
+            let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
+            let megapixels_per_sec = (pixels_composited as f64 / 1_000_000.0) / elapsed;
+            raw_samples.push(megapixels_per_sec as u64);
+        }
+
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }
 
@@ -167,19 +209,18 @@ impl Benchmark for Gfx3DRaster {
         3
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let mesh = generate_spiky_mesh(48); // ~9k triangles
         const W: usize = 480;
         const H: usize = 270;
 
+        // Phase d'échauffement
         let mut color_buf = vec![0u8; W * H];
         let mut depth_buf = vec![f32::INFINITY; W * H];
-
-        let start = Instant::now();
-        let mut triangles_rendered: u64 = 0;
+        let warmup_start = Instant::now();
         let mut angle: f32 = 0.0;
-
-        while start.elapsed() < GFX_BENCH_DURATION {
+        
+        while warmup_start.elapsed() < WARMUP_DURATION {
             for px in depth_buf.iter_mut() {
                 *px = f32::INFINITY;
             }
@@ -205,15 +246,57 @@ impl Benchmark for Gfx3DRaster {
                     (bx, by, bz),
                     (cx, cy, cz),
                 );
-                triangles_rendered += 1;
             }
-
             angle += 0.05;
         }
 
-        black_box(&color_buf);
-        let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
-        Ok((triangles_rendered as f64 / elapsed) as u64)
+        // Échantillonnage
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let mut color_buf = vec![0u8; W * H];
+            let mut depth_buf = vec![f32::INFINITY; W * H];
+            let start = Instant::now();
+            let mut triangles_rendered: u64 = 0;
+            let mut angle: f32 = 0.0;
+
+            while start.elapsed() < SAMPLE_DURATION {
+                for px in depth_buf.iter_mut() {
+                    *px = f32::INFINITY;
+                }
+                for px in color_buf.iter_mut() {
+                    *px = 0;
+                }
+
+                for tri in &mesh {
+                    let a = rotate_y(tri[0], angle);
+                    let b = rotate_y(tri[1], angle);
+                    let c = rotate_y(tri[2], angle);
+
+                    let (ax, ay, az) = project(a, W as f32, H as f32);
+                    let (bx, by, bz) = project(b, W as f32, H as f32);
+                    let (cx, cy, cz) = project(c, W as f32, H as f32);
+
+                    rasterize_triangle(
+                        &mut color_buf,
+                        &mut depth_buf,
+                        W,
+                        H,
+                        (ax, ay, az),
+                        (bx, by, bz),
+                        (cx, cy, cz),
+                    );
+                    triangles_rendered += 1;
+                }
+
+                angle += 0.05;
+            }
+
+            black_box(&color_buf);
+            let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
+            raw_samples.push((triangles_rendered as f64 / elapsed) as u64);
+        }
+
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }
 

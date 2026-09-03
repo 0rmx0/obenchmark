@@ -43,10 +43,11 @@
 //! représenterait pas le coût réel de l'algorithme.
 //!
 //! ## Valeur de retour
-//! [`Benchmark::run`] retourne toujours un score brut sous forme de `u64`,
-//! dont l'unité dépend du test (itérations/s, Mo/s, éléments/s, nombre de
+//! [`Benchmark::run`] retourne un [`SampleResult`] contenant les statistiques
+//! complètes de l'échantillonnage (médiane, écart-type, échantillons bruts).
+//! Les unités dépendent du test (itérations/s, Mo/s, éléments/s, nombre de
 //! passes ou de tirages effectués, etc. — voir la documentation de chaque
-//! test). Ce score brut est ensuite normalisé et pondéré par
+//! test). Le score brut (médiane) est ensuite normalisé et pondéré par
 //! [`crate::engines::score`] pour produire le score final affiché à
 //! l'utilisateur ; il n'est donc pas directement comparable d'un test à
 //! l'autre.
@@ -63,17 +64,18 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 use crate::engines::benchmark::Benchmark;
+use crate::model::result::SampleResult;
 
 /// Durée de la phase d'échauffement (non mesurée) exécutée avant chaque
 /// série d'échantillons. Voir la doc de module pour la justification.
 const WARMUP_DURATION: Duration = Duration::from_millis(500);
 
 /// Durée d'un échantillon de mesure individuel.
-const SAMPLE_DURATION: Duration = Duration::from_millis(1500);
+const SAMPLE_DURATION: Duration = Duration::from_millis(2000);
 
 /// Nombre d'échantillons indépendants dont la médiane constitue le score
-/// final d'un test.
-const SAMPLE_COUNT: usize = 3;
+/// final d'un test. Augmenté à 5 pour une meilleure précision statistique.
+const SAMPLE_COUNT: usize = 5;
 
 /// Durée minimale (en secondes) utilisée comme diviseur lors du calcul des
 /// débits, afin d'éviter toute division par zéro ou tout score aberrant sur
@@ -88,13 +90,13 @@ const MIN_ELAPSED_SEC: f64 = 1e-6;
 /// `batch` doit effectuer une petite tranche de travail borné et retourner
 /// le nombre d'unités traitées lors de cet appel. Elle est invoquée en
 /// boucle jusqu'à épuisement de chaque fenêtre de temps.
-fn measure_throughput<F: FnMut() -> u64>(mut batch: F) -> u64 {
+fn measure_throughput<F: FnMut() -> u64>(mut batch: F) -> SampleResult {
     let warmup_start = Instant::now();
     while warmup_start.elapsed() < WARMUP_DURATION {
         black_box(batch());
     }
 
-    let mut throughputs: Vec<f64> = Vec::with_capacity(SAMPLE_COUNT);
+    let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
     for _ in 0..SAMPLE_COUNT {
         let start = Instant::now();
         let mut units: u64 = 0;
@@ -102,10 +104,11 @@ fn measure_throughput<F: FnMut() -> u64>(mut batch: F) -> u64 {
             units = units.saturating_add(batch());
         }
         let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
-        throughputs.push(units as f64 / elapsed);
+        let throughput = (units as f64 / elapsed) as u64;
+        raw_samples.push(throughput);
     }
 
-    median(throughputs) as u64
+    SampleResult::from_samples(raw_samples)
 }
 
 /// Variante de [`measure_throughput`] pour les tests dont le score
@@ -113,23 +116,23 @@ fn measure_throughput<F: FnMut() -> u64>(mut batch: F) -> u64 {
 /// tirages Monte-Carlo effectués). Comme chaque échantillon dure
 /// exactement [`SAMPLE_DURATION`], les comptes obtenus sont directement
 /// comparables entre eux sans division par le temps écoulé.
-fn measure_count<F: FnMut() -> u64>(mut batch: F) -> u64 {
+fn measure_count<F: FnMut() -> u64>(mut batch: F) -> SampleResult {
     let warmup_start = Instant::now();
     while warmup_start.elapsed() < WARMUP_DURATION {
         black_box(batch());
     }
 
-    let mut counts: Vec<f64> = Vec::with_capacity(SAMPLE_COUNT);
+    let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
     for _ in 0..SAMPLE_COUNT {
         let start = Instant::now();
         let mut total: u64 = 0;
         while start.elapsed() < SAMPLE_DURATION {
             total = total.saturating_add(batch());
         }
-        counts.push(total as f64);
+        raw_samples.push(total);
     }
 
-    median(counts) as u64
+    SampleResult::from_samples(raw_samples)
 }
 
 /// Médiane d'un ensemble de mesures. Plus robuste que la moyenne face aux
@@ -203,11 +206,11 @@ impl Benchmark for CpuMultiCore {
         3
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let threads = rayon::current_num_threads().max(1) as u64;
         let items_per_batch = 200_000u64 * threads;
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             (0u64..items_per_batch).into_par_iter().for_each(|i| {
                 // Mélange entier relativement coûteux et difficile à
                 // optimiser : multiplication + rotation + XOR, inspiré des
@@ -223,7 +226,7 @@ impl Benchmark for CpuMultiCore {
             items_per_batch
         });
 
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -251,7 +254,7 @@ impl Benchmark for CpuIntMath {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         // Nombre d'itérations effectuées par appel, avant de revérifier
         // l'horloge : amortit le coût de `Instant::elapsed()` sur des
         // opérations individuellement très rapides (quelques cycles).
@@ -262,7 +265,7 @@ impl Benchmark for CpuIntMath {
         let mut x2: u64 = 3;
         let mut x3: u64 = 4;
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             for _ in 0..INNER {
                 x0 = x0.wrapping_mul(123456789).wrapping_add(987654321);
                 x0 = x0.wrapping_sub(54321) ^ x0.rotate_left(13);
@@ -280,7 +283,7 @@ impl Benchmark for CpuIntMath {
         });
 
         black_box(x0 ^ x1 ^ x2 ^ x3);
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -304,7 +307,7 @@ impl Benchmark for CpuFloatMath {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const INNER: u64 = 20_000;
 
         let mut x0: f64 = 1.0;
@@ -312,7 +315,7 @@ impl Benchmark for CpuFloatMath {
         let mut x2: f64 = 2.0;
         let mut x3: f64 = 0.5;
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             for _ in 0..INNER {
                 x0 = x0.mul_add(1.000_000_1, 0.000_000_1);
                 x0 = (x0.sin() + x0.cos()).tan();
@@ -330,7 +333,7 @@ impl Benchmark for CpuFloatMath {
         });
 
         black_box(x0 + x1 + x2 + x3);
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -358,11 +361,11 @@ impl Benchmark for CpuPrimeCalc {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const SIEVE_SIZE: usize = 1_000_000;
         let mut is_composite = vec![false; SIEVE_SIZE + 1];
 
-        let total = measure_count(|| {
+        let result = measure_count(|| {
             for v in is_composite.iter_mut() {
                 *v = false;
             }
@@ -382,7 +385,7 @@ impl Benchmark for CpuPrimeCalc {
             1
         });
 
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -412,13 +415,13 @@ impl Benchmark for CpuSSE {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const LEN: usize = 1_000_000;
         let x = vec![1.0f32; LEN];
         let mut y = vec![2.0f32; LEN];
         let a: f32 = 1.000_000_1;
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             for (yi, xi) in y.iter_mut().zip(x.iter()) {
                 *yi = a.mul_add(*xi, *yi);
             }
@@ -426,7 +429,7 @@ impl Benchmark for CpuSSE {
         });
 
         black_box(y[0]);
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -447,10 +450,10 @@ impl Benchmark for CpuCompression {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let data = generate_compressible_data(10_000_000);
 
-        let bytes_per_sec = measure_throughput(|| {
+        let result = measure_throughput(|| {
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
             encoder
                 .write_all(&data)
@@ -460,7 +463,7 @@ impl Benchmark for CpuCompression {
             data.len() as u64
         });
 
-        Ok((bytes_per_sec as f64 / (1024.0 * 1024.0)) as u64)
+        Ok(result)
     }
 }
 
@@ -488,12 +491,12 @@ impl Benchmark for CpuEncryption {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const INNER: u64 = 8;
         let data = vec![0u8; 1024 * 1024];
         let mut hasher = Sha256::new();
 
-        let bytes_per_sec = measure_throughput(|| {
+        let result = measure_throughput(|| {
             for _ in 0..INNER {
                 hasher.update(&data);
                 let digest = hasher.finalize_reset();
@@ -502,7 +505,7 @@ impl Benchmark for CpuEncryption {
             data.len() as u64 * INNER
         });
 
-        Ok((bytes_per_sec as f64 / (1024.0 * 1024.0)) as u64)
+        Ok(result)
     }
 }
 
@@ -532,7 +535,7 @@ impl Benchmark for CpuPhysics {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         // Nombre de corps simulés : assez grand pour représenter une
         // charge de calcul dense en flottant, assez petit pour que l'état
         // complet du système tienne dans le cache L2 de la plupart des
@@ -556,7 +559,7 @@ impl Benchmark for CpuPhysics {
             pz[i] = rng.gen_range(-1.0..1.0);
         }
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             for i in 0..BODIES {
                 let (mut fx, mut fy, mut fz) = (0f64, 0f64, 0f64);
                 for j in 0..BODIES {
@@ -587,7 +590,7 @@ impl Benchmark for CpuPhysics {
         });
 
         black_box((px[0], vy[0]));
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -614,21 +617,21 @@ impl Benchmark for CpuSorting {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const LEN: usize = 1_000_000;
 
         let mut rng = StdRng::seed_from_u64(123);
         let template: Vec<u64> = (0..LEN).map(|_| rng.gen()).collect();
         let mut buffer = template.clone();
 
-        let total = measure_throughput(|| {
+        let result = measure_throughput(|| {
             buffer.copy_from_slice(&template);
             buffer.sort_unstable();
             black_box(&buffer[0..16.min(buffer.len())]);
             LEN as u64
         });
 
-        Ok(total)
+        Ok(result)
     }
 }
 
@@ -669,7 +672,7 @@ impl Benchmark for CpuUCT {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         const BRANCHING: usize = 4;
         const DEPTH: usize = 8;
         // Constante d'exploration UCB1 usuelle : sqrt(2).
@@ -681,7 +684,7 @@ impl Benchmark for CpuUCT {
         let mut value_sum = vec![0f64; node_count];
         let mut rng = StdRng::seed_from_u64(0xC0FFEE);
 
-        let total = measure_count(|| {
+        let result = measure_count(|| {
             let mut path = [0usize; DEPTH + 1];
             let mut node = 0usize;
             path[0] = node;
@@ -730,6 +733,6 @@ impl Benchmark for CpuUCT {
         });
 
         black_box(&visits);
-        Ok(total)
+        Ok(result)
     }
 }

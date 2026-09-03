@@ -90,15 +90,25 @@ pub fn run_cli(opts: CliOptions) -> Result<()> {
         }
 
         let bench = spec.build();
-        let raw_score = bench
+        let sample_result = bench
             .run()
             .with_context(|| format!("benchmark '{}' failed", spec.name))?;
         let weight = bench.weight();
 
+        let std_dev_percent = if sample_result.value > 0 {
+            (sample_result.std_dev / sample_result.value as f64) * 100.0
+        } else {
+            0.0
+        };
+
         scores.push(BenchScore {
             name: spec.name.to_string(),
-            raw_score,
+            raw_score: sample_result.value,
             weight,
+            samples: Some(sample_result.clone()),
+            std_dev_percent: Some(std_dev_percent),
+            min: Some(sample_result.min),
+            max: Some(sample_result.max),
         });
 
         if let Some(pb) = &progress {

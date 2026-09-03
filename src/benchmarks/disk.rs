@@ -9,6 +9,18 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::engines::benchmark::Benchmark;
+use crate::model::result::SampleResult;
+
+/// Durée de la phase d'échauffement (non mesurée) exécutée avant chaque
+/// série d'échantillons.
+const WARMUP_DURATION: Duration = Duration::from_millis(500);
+
+/// Durée d'un échantillon de mesure individuel.
+const SAMPLE_DURATION: Duration = Duration::from_millis(2000);
+
+/// Nombre d'échantillons indépendants dont la médiane constitue le score
+/// final d'un test.
+const SAMPLE_COUNT: usize = 5;
 
 /// Taille des fichiers utilisés pour les tests.
 const SEQ_FILE_SIZE_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
@@ -145,29 +157,53 @@ impl Benchmark for DiskSequentialRead {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let (path, size) = create_test_file_best_effort("seq_read", SEQ_FILE_SIZE_BYTES)?;
 
-        // Mesure de la lecture seule.
-        let mut file = OpenOptions::new().read(true).open(&path)?;
-        let mut buffer = vec![0u8; SEQ_BLOCK_SIZE];
-        let start = Instant::now();
-        let mut read_bytes: u64 = 0;
-
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
+        // Phase d'échauffement
+        let warmup_start = Instant::now();
+        while warmup_start.elapsed() < WARMUP_DURATION {
+            let mut file = OpenOptions::new().read(true).open(&path)?;
+            let mut buffer = vec![0u8; SEQ_BLOCK_SIZE];
+            let mut read_bytes: u64 = 0;
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                read_bytes += n as u64;
+                if read_bytes >= size {
+                    break;
+                }
             }
-            read_bytes += n as u64;
         }
 
-        let elapsed = start.elapsed().as_secs_f64();
+        // Échantillonnage
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let mut file = OpenOptions::new().read(true).open(&path)?;
+            let mut buffer = vec![0u8; SEQ_BLOCK_SIZE];
+            let start = Instant::now();
+            let mut read_bytes: u64 = 0;
+
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                read_bytes += n as u64;
+                if start.elapsed() >= SAMPLE_DURATION {
+                    break;
+                }
+            }
+
+            let elapsed = start.elapsed().as_secs_f64().max(1.0 / 1000.0);
+            let mb_per_sec = bytes_per_sec_to_mb_per_sec(std::cmp::min(read_bytes, size), elapsed);
+            raw_samples.push(mb_per_sec);
+        }
+
         let _ = std::fs::remove_file(&path);
-        Ok(bytes_per_sec_to_mb_per_sec(
-            std::cmp::min(read_bytes, size),
-            elapsed,
-        ))
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }
 
@@ -183,7 +219,7 @@ impl Benchmark for DiskSequentialWrite {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let path = temp_file("seq_write");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -192,28 +228,53 @@ impl Benchmark for DiskSequentialWrite {
             let _ = std::fs::remove_file(&path);
         }
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)?;
-
-        let buffer = vec![0u8; SEQ_BLOCK_SIZE];
-        let mut remaining = SEQ_FILE_SIZE_BYTES;
-
-        let start = Instant::now();
-        let mut written: u64 = 0;
-        while remaining > 0 {
-            let to_write = std::cmp::min(remaining, buffer.len() as u64) as usize;
-            file.write_all(&buffer[..to_write])?;
-            written += to_write as u64;
-            remaining -= to_write as u64;
+        // Phase d'échauffement - créer et écrire un fichier temporaire
+        let warmup_start = Instant::now();
+        while warmup_start.elapsed() < WARMUP_DURATION {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+            let buffer = vec![0u8; SEQ_BLOCK_SIZE];
+            let mut remaining = SEQ_FILE_SIZE_BYTES;
+            while remaining > 0 {
+                let to_write = std::cmp::min(remaining, buffer.len() as u64) as usize;
+                file.write_all(&buffer[..to_write])?;
+                remaining -= to_write as u64;
+            }
+            file.sync_all()?;
+            let _ = std::fs::remove_file(&path);
         }
-        file.sync_all()?;
-        let elapsed = start.elapsed().as_secs_f64();
 
-        let _ = std::fs::remove_file(&path);
-        Ok(bytes_per_sec_to_mb_per_sec(written, elapsed))
+        // Échantillonnage
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+
+            let buffer = vec![0u8; SEQ_BLOCK_SIZE];
+            let mut remaining = SEQ_FILE_SIZE_BYTES;
+
+            let start = Instant::now();
+            let mut written: u64 = 0;
+            while remaining > 0 && start.elapsed() < SAMPLE_DURATION {
+                let to_write = std::cmp::min(remaining, buffer.len() as u64) as usize;
+                file.write_all(&buffer[..to_write])?;
+                written += to_write as u64;
+                remaining -= to_write as u64;
+            }
+            file.sync_all()?;
+            let elapsed = start.elapsed().as_secs_f64().max(1.0 / 1000.0);
+            let mb_per_sec = bytes_per_sec_to_mb_per_sec(written, elapsed);
+            raw_samples.push(mb_per_sec);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }
 
@@ -229,11 +290,18 @@ impl Benchmark for DiskRandomIOPS32K {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let (path, size) = create_test_file_best_effort("rand_32k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(&path, size, RAND_32K_BLOCK_SIZE, QD_32K)?;
+        
+        // Échantillonnage - exécuter plusieurs tests IOPS
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let iops = random_read_iops(&path, size, RAND_32K_BLOCK_SIZE, QD_32K)?;
+            raw_samples.push(iops);
+        }
+        
         let _ = std::fs::remove_file(&path);
-        Ok(iops)
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }
 
@@ -249,10 +317,17 @@ impl Benchmark for DiskRandomIOPS4K {
         2
     }
 
-    fn run(&self) -> Result<u64> {
+    fn run(&self) -> Result<SampleResult> {
         let (path, size) = create_test_file_best_effort("rand_4k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(&path, size, RAND_4K_BLOCK_SIZE, QD_4K)?;
+        
+        // Échantillonnage - exécuter plusieurs tests IOPS
+        let mut raw_samples: Vec<u64> = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let iops = random_read_iops(&path, size, RAND_4K_BLOCK_SIZE, QD_4K)?;
+            raw_samples.push(iops);
+        }
+        
         let _ = std::fs::remove_file(&path);
-        Ok(iops)
+        Ok(SampleResult::from_samples(raw_samples))
     }
 }

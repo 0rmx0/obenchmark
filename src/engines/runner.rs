@@ -1,6 +1,6 @@
 use crate::engines::benchmark::Benchmark;
 use crate::engines::score::compute_aggregated_scores;
-use crate::model::result::{BenchResult, BenchScore};
+use crate::model::result::{BenchResult, BenchScore, SampleResult};
 use crate::util::sysinfo::get_detailed_system_info;
 use crossbeam_channel::Sender;
 
@@ -8,6 +8,7 @@ pub enum RunnerEvent {
     BenchStarted(String),
     #[allow(dead_code)]
     BenchFinished(String, u64),
+    BenchFinishedWithSamples(String, SampleResult),
     Done(BenchResult),
     Error(String),
 }
@@ -15,6 +16,8 @@ pub enum RunnerEvent {
 pub fn run_benchmarks(benches: Vec<Box<dyn Benchmark>>, tx: Sender<RunnerEvent>) {
     std::thread::spawn(move || {
         let mut scores: Vec<BenchScore> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        let mut failed_count = 0;
 
         for bench in benches {
             let name = bench.name().to_string();
@@ -23,23 +26,40 @@ pub fn run_benchmarks(benches: Vec<Box<dyn Benchmark>>, tx: Sender<RunnerEvent>)
             tx.send(RunnerEvent::BenchStarted(name.clone())).ok();
 
             match bench.run() {
-                Ok(score) => {
+                Ok(sample_result) => {
+                    let raw_score = sample_result.value;
+                    
+                    // Calculate std_dev_percent for the score
+                    let std_dev_percent = if sample_result.value > 0 {
+                        Some((sample_result.std_dev / sample_result.value as f64) * 100.0)
+                    } else {
+                        Some(0.0)
+                    };
+                    
                     scores.push(BenchScore {
                         name: name.clone(),
-                        raw_score: score,
+                        raw_score,
                         weight,
+                        samples: Some(sample_result.clone()),
+                        std_dev_percent,
+                        min: Some(sample_result.min),
+                        max: Some(sample_result.max),
                     });
-                    tx.send(RunnerEvent::BenchFinished(name.clone(), score))
-                        .ok();
+                    
+                    tx.send(RunnerEvent::BenchFinished(name.clone(), raw_score)).ok();
+                    tx.send(RunnerEvent::BenchFinishedWithSamples(name, sample_result)).ok();
                 }
                 Err(e) => {
+                    errors.push(format!("Benchmark '{}' failed: {}", name, e));
+                    failed_count += 1;
                     tx.send(RunnerEvent::Error(e.to_string())).ok();
-                    return;
+                    // Continue with next benchmark instead of returning
                 }
             }
         }
 
-        tx.send(RunnerEvent::Done(build_bench_result(scores))).ok();
+        let result = build_bench_result_with_errors(scores, errors);
+        tx.send(RunnerEvent::Done(result)).ok();
     });
 }
 
@@ -172,6 +192,11 @@ pub fn build_bench_result(scores: Vec<BenchScore>) -> BenchResult {
     let aggregated = compute_aggregated_scores(&scores);
     let system_info = get_detailed_system_info();
 
+    // Count completed, failed, and skipped benchmarks
+    let completed_benchmarks = scores.len();
+    let failed_benchmarks = 0; // No failures in this path
+    let skipped_benchmarks = 0;
+
     BenchResult {
         scores,
         final_score: aggregated.global,
@@ -180,5 +205,65 @@ pub fn build_bench_result(scores: Vec<BenchScore>) -> BenchResult {
         disk_score: aggregated.disk,
         gfx_score: aggregated.gfx,
         system_info: Some(system_info),
+        errors: vec![],
+        validation: None,
+        completed_benchmarks,
+        failed_benchmarks,
+        skipped_benchmarks,
+        start_time: None,
+        end_time: None,
+        duration_seconds: None,
+    }
+}
+
+pub fn build_bench_result_with_errors(scores: Vec<BenchScore>, errors: Vec<String>) -> BenchResult {
+    let aggregated = compute_aggregated_scores(&scores);
+    let system_info = get_detailed_system_info();
+
+    // Convert errors to BenchError format
+    let bench_errors: Vec<crate::model::result::BenchError> = errors
+        .into_iter()
+        .map(|error| {
+            // Parse benchmark name from error if possible
+            if let Some(idx) = error.find("' ") {
+                let name = error[1..idx].to_string();
+                crate::model::result::BenchError {
+                    benchmark_name: name,
+                    error_type: "execution_error".to_string(),
+                    message: error,
+                    timestamp: None,
+                }
+            } else {
+                crate::model::result::BenchError {
+                    benchmark_name: "Unknown".to_string(),
+                    error_type: "execution_error".to_string(),
+                    message: error,
+                    timestamp: None,
+                }
+            }
+        })
+        .collect();
+
+    // Count completed, failed, and skipped benchmarks
+    let completed_benchmarks = scores.len();
+    let failed_benchmarks = bench_errors.len();
+    let skipped_benchmarks = 0;
+
+    BenchResult {
+        scores,
+        final_score: aggregated.global,
+        cpu_score: aggregated.cpu,
+        mem_score: aggregated.mem,
+        disk_score: aggregated.disk,
+        gfx_score: aggregated.gfx,
+        system_info: Some(system_info),
+        errors: bench_errors,
+        validation: None,
+        completed_benchmarks,
+        failed_benchmarks,
+        skipped_benchmarks,
+        start_time: None,
+        end_time: None,
+        duration_seconds: None,
     }
 }
