@@ -1,7 +1,14 @@
 use crate::model::result::BenchScore;
 
-/// Baselines pour score normalisé
-/// ~1000 = machine de référence
+/// Baselines pour score normalisé.
+///
+/// Chaque baseline représente la performance d'une « machine de référence » :
+/// ~1000 points normalisés correspondent à cette machine. Les baselines par
+/// bench individuel (`per_bench_baseline`) sont calibrées sur un SSD SATA
+/// typique (~500 Mo/s séquentiel, ~50 000 IOPS 32K QD20) et un CPU mid-range
+/// moderne. Pour un étalonnage rigoureux type PassMark, ces valeurs devraient
+/// être mesurées sur un échantillon de machines de référence et ajustées
+/// statistiquement (médiane des machines de la génération courante).
 const CPU_BASELINE: u64 = 50_000_000;
 const MEM_BASELINE: u64 = 5000;
 const DISK_BASELINE: u64 = 1000;
@@ -51,11 +58,13 @@ fn per_bench_baseline(name: &str) -> Option<u64> {
         "Mem Latency" => Some(50_000_000),   // accès/s
         "Mem Threaded" => Some(50_000),      // MB/s agrégés
 
-        // Disque
-        "Disk Seq Read" => Some(500),  // MB/s
-        "Disk Seq Write" => Some(400), // MB/s
+        // Disque (E/S directs, contournant le cache OS)
+        "Disk Seq Read" => Some(500),  // MB/s (SSD SATA)
+        "Disk Seq Write" => Some(400), // MB/s (SSD SATA)
+        // Lecture aléatoire 32K QD20
         "Disk IOPS 32K QD20" => Some(50_000),
-        "Disk IOPS 4K QD1" => Some(10_000),
+        // Écriture aléatoire 4K QD1 (plus lente que la lecture)
+        "Disk IOPS 4K QD1" => Some(8_000),
 
         _ => None,
     }
@@ -169,6 +178,8 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
         }
     }
 
+    // Arrondi au plus proche, volontairement différent de `checked_div`.
+    #[allow(clippy::manual_checked_ops)]
     let compute_avg = |total_score: u128, total_weight: u128| -> u64 {
         if total_weight == 0 {
             0
@@ -327,7 +338,7 @@ mod tests {
         assert_eq!(per_bench_baseline("Disk Seq Read"), Some(500));
         assert_eq!(per_bench_baseline("Disk Seq Write"), Some(400));
         assert_eq!(per_bench_baseline("Disk IOPS 32K QD20"), Some(50_000));
-        assert_eq!(per_bench_baseline("Disk IOPS 4K QD1"), Some(10_000));
+        assert_eq!(per_bench_baseline("Disk IOPS 4K QD1"), Some(8_000));
     }
 
     #[test]
@@ -401,7 +412,7 @@ mod tests {
     fn aggregated_scores_handles_mixed_categories() {
         let scores = vec![
             bench("CPU Multi-Core", 80_000_000, 2),
-            bench("CPU Int Math", 25_000_000, 2),  // 500 normalisé
+            bench("CPU Int Math", 25_000_000, 2), // 500 normalisé
             bench("Mem Write", 20_000, 2),
             bench("Disk Seq Read", 500, 2),
         ];

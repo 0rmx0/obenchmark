@@ -1,22 +1,8 @@
 use sysinfo::System;
 
 use crate::model::result::{CpuInfo, DiskInfo, MemoryModule, SystemInfo};
+use crate::util::format::human_bytes;
 use std::collections::HashMap;
-
-/// Convert bytes to human-readable format
-fn human_bytes(mut bytes: f64) -> String {
-    let units = ["B", "KB", "MB", "GB", "TB"];
-    let mut i = 0usize;
-    while bytes >= 1024.0 && i < units.len() - 1 {
-        bytes /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{} {}", bytes as u64, units[i])
-    } else {
-        format!("{:.2} {}", bytes, units[i])
-    }
-}
 
 /// Get basic system info from sysinfo crate
 pub fn get_system_info() -> System {
@@ -43,10 +29,10 @@ pub fn get_detailed_system_info() -> SystemInfo {
 
 /// Get CPU information with platform-specific enhancements
 fn get_cpu_info(sysinfo: &mut SystemInfo) {
-    let mut cpu = CpuInfo::default();
-    
-    // Always get logical cores from num_cpus as fallback
-    cpu.cores_logical = num_cpus::get();
+    let mut cpu = CpuInfo {
+        cores_logical: num_cpus::get(),
+        ..CpuInfo::default()
+    };
 
     // Try to get info from sysinfo first
     let s = get_system_info();
@@ -67,7 +53,7 @@ fn get_cpu_info(sysinfo: &mut SystemInfo) {
     // Get CPU frequency
     let freq = g.frequency();
     if freq > 0 {
-        cpu.frequency_mhz = Some(freq as u64);
+        cpu.frequency_mhz = Some(freq);
     }
 
     // Platform-specific enhancements
@@ -161,11 +147,11 @@ fn get_disk_info(sysinfo: &mut SystemInfo) {
 fn get_windows_cpu_info(cpu: &mut CpuInfo) {
     // Try to get CPU info from WMI as fallback
     let wmi_result = wmi::WMIConnection::new();
-    
+
     if let Ok(wmi) = wmi_result {
         // Query for processor information
         if let Ok(procs) = wmi.raw_query::<Win32Processor>(
-            "SELECT Name, Manufacturer, MaxClockSpeed, CurrentClockSpeed FROM Win32_Processor"
+            "SELECT Name, Manufacturer, MaxClockSpeed, CurrentClockSpeed FROM Win32_Processor",
         ) {
             if let Some(p) = procs.into_iter().next() {
                 // Update model if not already set or empty
@@ -177,7 +163,12 @@ fn get_windows_cpu_info(cpu: &mut CpuInfo) {
 
                 // Update vendor if not already set or empty
                 if cpu.vendor.as_ref().map_or(true, |v| v.is_empty()) {
-                    if let Some(manufacturer) = p.Manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    if let Some(manufacturer) = p
+                        .Manufacturer
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
                         cpu.vendor = Some(manufacturer.to_string());
                     }
                 }
@@ -220,7 +211,7 @@ fn get_windows_ram_info(sysinfo: &mut SystemInfo) {
     let mut type_hist: HashMap<String, u32> = HashMap::new();
 
     let wmi_result = WMIConnection::new();
-    
+
     if let Ok(wmi) = wmi_result {
         // Query for physical memory
         if let Ok(mem_items) = wmi.raw_query::<Win32PhysicalMemory>(
@@ -259,17 +250,17 @@ fn get_windows_ram_info(sysinfo: &mut SystemInfo) {
 }
 
 #[cfg(target_os = "windows")]
-fn get_windows_disk_info(disks: &mut Vec<DiskInfo>) {
+fn get_windows_disk_info(disks: &mut [DiskInfo]) {
     use wmi::WMIConnection;
 
     // For simplicity, apply info to all disks based on WMI data
     // This is a simplified approach that should work for most systems
     let wmi_result = WMIConnection::new();
-    
+
     if let Ok(wmi) = wmi_result {
         // Get disk drive information
         if let Ok(drives) = wmi.raw_query::<Win32DiskDrive>(
-            "SELECT DeviceID, Model, Manufacturer, InterfaceType, MediaType FROM Win32_DiskDrive"
+            "SELECT DeviceID, Model, Manufacturer, InterfaceType, MediaType FROM Win32_DiskDrive",
         ) {
             for (i, drive) in drives.into_iter().enumerate() {
                 if i >= disks.len() {
@@ -278,11 +269,19 @@ fn get_windows_disk_info(disks: &mut Vec<DiskInfo>) {
 
                 let disk = &mut disks[i];
 
-                let model = drive.Model.as_deref().map(str::trim).filter(|s| !s.is_empty());
-                let vendor = drive.Manufacturer.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                let model = drive
+                    .Model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let vendor = drive
+                    .Manufacturer
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let interface = drive.InterfaceType.as_deref().map(str::trim);
                 let media = drive.MediaType.as_deref().map(str::trim);
-                
+
                 // Determine disk type
                 let disk_type = determine_disk_type(interface, model, media);
 
@@ -341,12 +340,12 @@ fn map_smbios_memory_type(code: u16) -> Option<&'static str> {
 #[cfg(target_os = "windows")]
 fn get_cpu_name_from_wmic() -> Option<String> {
     use std::process::Command;
-    
+
     let output = Command::new("wmic")
         .args(&["cpu", "get", "name", "/value"])
         .output()
         .ok()?;
-    
+
     if output.status.success() {
         let output_str = String::from_utf8_lossy(&output.stdout);
         for line in output_str.lines() {
@@ -358,7 +357,7 @@ fn get_cpu_name_from_wmic() -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -440,7 +439,7 @@ fn get_linux_cpu_info(cpu: &mut CpuInfo) {
 #[cfg(target_os = "linux")]
 fn get_linux_ram_info(sysinfo: &mut SystemInfo) {
     use std::process::Command;
-    
+
     let mut modules = Vec::new();
     let mut type_hist: HashMap<String, u32> = HashMap::new();
 
@@ -477,13 +476,12 @@ fn get_linux_ram_info(sysinfo: &mut SystemInfo) {
                     }
                     if let Some(v) = line.strip_prefix("Size:") {
                         let s = v.trim();
-                        if s.ends_with("GB") {
-                            if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
+                        if let Some(rest) = s.strip_suffix("GB") {
+                            if let Ok(n) = rest.trim().parse::<u64>() {
                                 current.size_mb = Some(n * 1024);
                             }
-                        }
-                        if s.ends_with("MB") {
-                            if let Ok(n) = s[..s.len() - 2].trim().parse::<u64>() {
+                        } else if let Some(rest) = s.strip_suffix("MB") {
+                            if let Ok(n) = rest.trim().parse::<u64>() {
                                 current.size_mb = Some(n);
                             }
                         }
@@ -512,16 +510,15 @@ fn get_linux_ram_info(sysinfo: &mut SystemInfo) {
 }
 
 #[cfg(target_os = "linux")]
-fn get_linux_disk_info(disks: &mut Vec<DiskInfo>) {
+fn get_linux_disk_info(disks: &mut [DiskInfo]) {
     use std::fs;
 
     for disk in disks.iter_mut() {
         // Extract device name from path (e.g., "/dev/sda" -> "sda")
         let raw_name = disk.name.clone();
         let dev_name = raw_name
-            .split(|c| c == '/' || c == '\\')
-            .filter(|s| !s.is_empty())
-            .last()
+            .split(['/', '\\'])
+            .rfind(|s| !s.is_empty())
             .unwrap_or(&raw_name)
             .to_string();
 
@@ -533,7 +530,9 @@ fn get_linux_disk_info(disks: &mut Vec<DiskInfo>) {
                 dev_name
             }
         } else {
-            dev_name.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
+            dev_name
+                .trim_end_matches(|c: char| c.is_ascii_digit())
+                .to_string()
         };
 
         // Read from /sys/block
@@ -591,48 +590,42 @@ fn get_linux_disk_info(disks: &mut Vec<DiskInfo>) {
 // ============================================================================
 
 #[cfg(target_os = "macos")]
-fn get_macos_disk_info(disks: &mut Vec<DiskInfo>) {
+fn get_macos_disk_info(disks: &mut [DiskInfo]) {
     use std::process::Command;
 
-    if disks.is_empty() {
-        // Try to get disk info from diskutil
-        if let Ok(out) = Command::new("diskutil").arg("info").arg("-all").output() {
-            if out.status.success() {
-                if let Ok(txt) = String::from_utf8(out.stdout) {
-                    let mut model = None;
-                    let mut vendor = None;
+    let Some(first_disk) = disks.first_mut() else {
+        return;
+    };
 
-                    for line in txt.lines() {
-                        let l = line.trim();
-                        if l.starts_with("Device Model:") {
-                            model = Some(l[13..].trim().to_string());
-                        }
-                        if l.starts_with("Device Manufacturer:") {
-                            vendor = Some(l[20..].trim().to_string());
-                        }
-                    }
+    if let Ok(out) = Command::new("diskutil").arg("info").arg("-all").output() {
+        if !out.status.success() {
+            return;
+        }
+        let Ok(txt) = String::from_utf8(out.stdout) else {
+            return;
+        };
 
-                    // Apply to first disk if we have info
-                    if !disks.is_empty() {
-                        let first_disk = &mut disks[0];
-                        if model.is_some() {
-                            first_disk.model = model;
-                        }
-                        if vendor.is_some() {
-                            first_disk.vendor = vendor;
-                        }
-
-                        // Determine disk type from model
-                        if let Some(m) = &first_disk.model {
-                            let s = m.to_lowercase();
-                            if s.contains("nvme") {
-                                first_disk.disk_type = Some("NVMe".into());
-                            } else if s.contains("ssd") {
-                                first_disk.disk_type = Some("SSD".into());
-                            }
-                        }
-                    }
+        for line in txt.lines() {
+            let l = line.trim();
+            if l.starts_with("Device Model:") {
+                let m = l[13..].trim();
+                if !m.is_empty() {
+                    first_disk.model = Some(m.to_string());
                 }
+            } else if l.starts_with("Device Manufacturer:") {
+                let v = l[20..].trim();
+                if !v.is_empty() {
+                    first_disk.vendor = Some(v.to_string());
+                }
+            }
+        }
+
+        if let Some(m) = &first_disk.model {
+            let s = m.to_lowercase();
+            if s.contains("nvme") {
+                first_disk.disk_type = Some("NVMe".into());
+            } else if s.contains("ssd") {
+                first_disk.disk_type = Some("SSD".into());
             }
         }
     }
@@ -643,54 +636,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn human_bytes_zero() {
-        assert_eq!(human_bytes(0.0), "0 B");
-    }
-
-    #[test]
-    fn human_bytes_small_values() {
-        assert_eq!(human_bytes(100.0), "100 B");
-        assert_eq!(human_bytes(1023.0), "1023 B");
-    }
-
-    #[test]
-    fn human_bytes_kilobytes() {
-        assert_eq!(human_bytes(1024.0), "1.00 KB");
-        assert_eq!(human_bytes(2048.0), "2.00 KB");
-    }
-
-    #[test]
-    fn human_bytes_megabytes() {
-        assert_eq!(human_bytes(1024.0 * 1024.0), "1.00 MB");
-        assert_eq!(human_bytes(1024.0 * 1024.0 * 2.5), "2.50 MB");
-    }
-
-    #[test]
-    fn human_bytes_gigabytes() {
-        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0), "1.00 GB");
-        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0 * 5.5), "5.50 GB");
-    }
-
-    #[test]
-    fn human_bytes_terabytes() {
-        assert_eq!(human_bytes(1024.0 * 1024.0 * 1024.0 * 1024.0), "1.00 TB");
-    }
-
-    #[test]
-    fn human_bytes_very_large() {
-        let bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0 * 2.5;
-        assert_eq!(human_bytes(bytes), "2.50 TB");
-    }
-
-    #[test]
-    fn human_bytes_fractional() {
-        assert_eq!(human_bytes(1536.0), "1.50 KB");
-    }
-
-    #[test]
     fn get_system_info_does_not_panic() {
         let sys = get_system_info();
-        assert!(sys.cpus().len() > 0);
+        assert!(!sys.cpus().is_empty());
     }
 
     #[test]
@@ -734,13 +682,31 @@ mod tests {
     #[test]
     fn test_determine_disk_type() {
         use super::determine_disk_type;
-        
-        assert_eq!(determine_disk_type(Some("NVMe"), None, None), Some("NVMe".to_string()));
-        assert_eq!(determine_disk_type(None, Some("Samsung NVMe"), None), Some("NVMe".to_string()));
-        assert_eq!(determine_disk_type(None, None, Some("SSD")), Some("SSD".to_string()));
-        assert_eq!(determine_disk_type(None, Some("Crucial SSD"), None), Some("SSD".to_string()));
-        assert_eq!(determine_disk_type(None, None, Some("HDD")), Some("HDD".to_string()));
-        assert_eq!(determine_disk_type(None, None, Some("Fixed hard disk media")), Some("HDD".to_string()));
+
+        assert_eq!(
+            determine_disk_type(Some("NVMe"), None, None),
+            Some("NVMe".to_string())
+        );
+        assert_eq!(
+            determine_disk_type(None, Some("Samsung NVMe"), None),
+            Some("NVMe".to_string())
+        );
+        assert_eq!(
+            determine_disk_type(None, None, Some("SSD")),
+            Some("SSD".to_string())
+        );
+        assert_eq!(
+            determine_disk_type(None, Some("Crucial SSD"), None),
+            Some("SSD".to_string())
+        );
+        assert_eq!(
+            determine_disk_type(None, None, Some("HDD")),
+            Some("HDD".to_string())
+        );
+        assert_eq!(
+            determine_disk_type(None, None, Some("Fixed hard disk media")),
+            Some("HDD".to_string())
+        );
         assert_eq!(determine_disk_type(Some("SATA"), None, None), None);
     }
 }
