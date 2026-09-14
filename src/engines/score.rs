@@ -169,6 +169,8 @@ pub fn compute_aggregated_scores(scores: &[BenchScore]) -> AggregatedScores {
         }
     }
 
+    // Arrondi au plus proche, volontairement différent de `checked_div`.
+    #[allow(clippy::manual_checked_ops)]
     let compute_avg = |total_score: u128, total_weight: u128| -> u64 {
         if total_weight == 0 {
             0
@@ -401,7 +403,7 @@ mod tests {
     fn aggregated_scores_handles_mixed_categories() {
         let scores = vec![
             bench("CPU Multi-Core", 80_000_000, 2),
-            bench("CPU Int Math", 25_000_000, 2),  // 500 normalisé
+            bench("CPU Int Math", 25_000_000, 2), // 500 normalisé
             bench("Mem Write", 20_000, 2),
             bench("Disk Seq Read", 500, 2),
         ];

@@ -6,12 +6,12 @@ Open-source cross-platform benchmark tool written in Rust.
 - CPU multi-core real benchmark (several subtests described below)
 - Detailed memory tests including cached/uncached read, write, latency, availability
 - Disk I/O tests covering sequential read/write and random IOPS at different depths
-- Normalized score system with per-benchmark clamping and 5‑digit final score
+- Normalized score system with per-benchmark clamping and final score cap
 - Beautiful Slint GUI dashboard with progress bars and result export
 - Export results as JSON for later analysis
 
 ## Benchmark Tests
-Each run executes a suite of individual benchmarks; results are normalized and weighted to produce a single final score (max 99999).
+Each run executes a suite of individual benchmarks; results are normalized and weighted to produce a single final score (max 999999).
 
 ### CPU tests
 - **Multi-Core**: parallel integer loop to exercise all cores.
@@ -40,7 +40,7 @@ Each run executes a suite of individual benchmarks; results are normalized and w
 - **IOPS 4K QD1**: random 4 KB ops single queued.
 
 ## Scoring
-Raw results are normalized against predefined baselines per category. Each normalized value is capped to 10 000 to avoid outliers skewing the average. Scores are weighted, averaged, and finally clamped to at most five decimal digits (≤ 99999) to produce the final score shown in the GUI. This ensures reproducible, comparable numbers across different hardware.
+Raw results are normalized against predefined baselines per category. Each normalized value is capped to 100 000 to avoid outliers skewing the average. Scores are weighted, averaged, and finally clamped to 999 999 to produce the final score shown in the GUI. This ensures reproducible, comparable numbers across different hardware.
 
 ## Usage
 Build and run with `cargo run` or use the provided binary. Click **Start Benchmark** to begin; the GUI will display progress and final results. You can export a JSON file of the scores using the corresponding button or restart the tests with the "New Analysis" button.

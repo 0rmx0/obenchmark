@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
-use serde_json;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -9,6 +8,7 @@ use crate::{
     benchmarks::suite::{BenchSpec, AVAILABLE_BENCHMARKS},
     engines::runner::build_bench_result,
     model::result::{BenchResult, BenchScore},
+    util::format::{human_bytes, unit_for_bench},
 };
 
 /// Command-line entry point for OBenchmark.
@@ -196,7 +196,7 @@ fn print_summary(result: &BenchResult) {
             let size = disk
                 .size_readable
                 .clone()
-                .unwrap_or_else(|| human_bytes(disk.total_bytes.unwrap_or(0)));
+                .unwrap_or_else(|| human_bytes(disk.total_bytes.unwrap_or(0) as f64));
             println!(
                 "  Disk {} {} [{}] - {}",
                 label,
@@ -208,117 +208,9 @@ fn print_summary(result: &BenchResult) {
     }
 }
 
-fn human_bytes(bytes: u64) -> String {
-    let mut bytes = bytes as f64;
-    let units = ["B", "KB", "MB", "GB", "TB"];
-    let mut idx = 0;
-    while bytes >= 1024.0 && idx < units.len() - 1 {
-        bytes /= 1024.0;
-        idx += 1;
-    }
-    if idx == 0 {
-        format!("{} {}", bytes as u64, units[idx])
-    } else {
-        format!("{:.2} {}", bytes, units[idx])
-    }
-}
-
-fn unit_for_bench(name: &str) -> &'static str {
-    match name {
-        "CPU Multi-Core" | "CPU Int Math" | "CPU Float Math" | "CPU Prime Calc" | "CPU SSE Ext"
-        | "CPU Physics" | "CPU Sorting" | "CPU UCT Single" => "ops/s",
-
-        "CPU Compression" | "CPU Encryption" => "MB/s",
-
-        "Mem DB Ops" => "ops/s",
-        "Mem Cached Read" | "Mem Uncached Read" | "Mem Write" | "Mem Threaded" => "MB/s",
-        "Mem Available" => "MB",
-        "Mem Latency" => "accès/s",
-
-        "Disk Seq Read" | "Disk Seq Write" => "MB/s",
-        "Disk IOPS 32K QD20" | "Disk IOPS 4K QD1" => "IOPS",
-
-        _ => "",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Tests pour human_bytes()
-    #[test]
-    fn human_bytes_zero() {
-        assert_eq!(human_bytes(0), "0 B");
-    }
-
-    #[test]
-    fn human_bytes_small() {
-        assert_eq!(human_bytes(500), "500 B");
-    }
-
-    #[test]
-    fn human_bytes_kilobytes() {
-        assert_eq!(human_bytes(1024), "1.00 KB");
-    }
-
-    #[test]
-    fn human_bytes_megabytes() {
-        assert_eq!(human_bytes(1024 * 1024), "1.00 MB");
-    }
-
-    #[test]
-    fn human_bytes_gigabytes() {
-        assert_eq!(human_bytes(1024 * 1024 * 1024), "1.00 GB");
-    }
-
-    #[test]
-    fn human_bytes_terabytes() {
-        assert_eq!(human_bytes(1024 * 1024 * 1024 * 1024), "1.00 TB");
-    }
-
-    // Tests pour unit_for_bench()
-    #[test]
-    fn unit_for_bench_cpu_ops() {
-        assert_eq!(unit_for_bench("CPU Multi-Core"), "ops/s");
-        assert_eq!(unit_for_bench("CPU Int Math"), "ops/s");
-        assert_eq!(unit_for_bench("CPU Float Math"), "ops/s");
-        assert_eq!(unit_for_bench("CPU Prime Calc"), "ops/s");
-        assert_eq!(unit_for_bench("CPU SSE Ext"), "ops/s");
-        assert_eq!(unit_for_bench("CPU Physics"), "ops/s");
-        assert_eq!(unit_for_bench("CPU Sorting"), "ops/s");
-        assert_eq!(unit_for_bench("CPU UCT Single"), "ops/s");
-    }
-
-    #[test]
-    fn unit_for_bench_cpu_mb() {
-        assert_eq!(unit_for_bench("CPU Compression"), "MB/s");
-        assert_eq!(unit_for_bench("CPU Encryption"), "MB/s");
-    }
-
-    #[test]
-    fn unit_for_bench_memory() {
-        assert_eq!(unit_for_bench("Mem DB Ops"), "ops/s");
-        assert_eq!(unit_for_bench("Mem Cached Read"), "MB/s");
-        assert_eq!(unit_for_bench("Mem Uncached Read"), "MB/s");
-        assert_eq!(unit_for_bench("Mem Write"), "MB/s");
-        assert_eq!(unit_for_bench("Mem Available"), "MB");
-        assert_eq!(unit_for_bench("Mem Latency"), "accès/s");
-        assert_eq!(unit_for_bench("Mem Threaded"), "MB/s");
-    }
-
-    #[test]
-    fn unit_for_bench_disk() {
-        assert_eq!(unit_for_bench("Disk Seq Read"), "MB/s");
-        assert_eq!(unit_for_bench("Disk Seq Write"), "MB/s");
-        assert_eq!(unit_for_bench("Disk IOPS 32K QD20"), "IOPS");
-        assert_eq!(unit_for_bench("Disk IOPS 4K QD1"), "IOPS");
-    }
-
-    #[test]
-    fn unit_for_bench_unknown() {
-        assert_eq!(unit_for_bench("Unknown"), "");
-    }
 
     // Tests pour select_specs()
     #[test]
@@ -339,7 +231,7 @@ mod tests {
     fn select_specs_cpu_filter() {
         let specs = select_specs(Some("CPU"));
         // Should return only CPU benchmarks
-        assert!(specs.len() > 0);
+        assert!(!specs.is_empty());
         assert!(specs.len() < AVAILABLE_BENCHMARKS.len());
         for spec in specs {
             assert!(spec.name.contains("CPU"));
@@ -362,7 +254,7 @@ mod tests {
     #[test]
     fn select_specs_partial_match() {
         let specs = select_specs(Some("Int"));
-        assert!(specs.len() >= 1);
+        assert!(!specs.is_empty());
         let names: Vec<&str> = specs.iter().map(|s| s.name).collect();
         assert!(names.contains(&"CPU Int Math"));
     }

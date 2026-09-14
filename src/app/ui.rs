@@ -11,6 +11,7 @@ use crate::{
     benchmarks::suite,
     engines::runner::{run_benchmarks, RunnerEvent},
     model::result::BenchResult,
+    util::format::{human_bytes, unit_for_bench},
     util::sysinfo::get_system_info,
 };
 
@@ -80,10 +81,25 @@ pub fn run_gui() -> Result<(), slint::PlatformError> {
     });
 
     let state_export = state.clone();
+    let ui_weak_export = ui.as_weak();
     ui.on_export_clicked(move || {
         if let AppState::Showing(result) = &*state_export.borrow() {
-            let json = serde_json::to_string_pretty(result).unwrap();
-            let _ = std::fs::write(format!("bench_{}.json", Local::now().timestamp()), json);
+            let path = format!("bench_{}.json", Local::now().timestamp());
+            let outcome: Result<(), String> = (|| {
+                let json = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+                std::fs::write(&path, json).map_err(|e| e.to_string())
+            })();
+            match outcome {
+                Ok(()) => eprintln!("Exporté vers {}", path),
+                Err(e) => {
+                    eprintln!("Échec de l'export : {}", e);
+                    *state_export.borrow_mut() =
+                        AppState::Error(format!("Échec de l'export : {e}"));
+                    if let Some(ui) = ui_weak_export.upgrade() {
+                        apply_state_to_ui(&ui, &state_export.borrow());
+                    }
+                }
+            }
         }
     });
 
@@ -107,9 +123,7 @@ fn apply_event(state: AppState, event: RunnerEvent) -> AppState {
     match event {
         RunnerEvent::BenchStarted(name) => {
             if let AppState::Running {
-                completed,
-                total,
-                ..
+                completed, total, ..
             } = state
             {
                 AppState::Running {
@@ -197,11 +211,7 @@ fn build_score_model(result: &BenchResult) -> ModelRc<ScoreRow> {
         .iter()
         .map(|s| ScoreRow {
             name: SharedString::from(s.name.as_str()),
-            value: SharedString::from(format!(
-                "{} {}",
-                s.raw_score,
-                unit_for_bench(&s.name)
-            )),
+            value: SharedString::from(format!("{} {}", s.raw_score, unit_for_bench(&s.name))),
         })
         .collect();
 
@@ -214,13 +224,22 @@ fn build_system_info_model(result: &BenchResult) -> ModelRc<InfoLine> {
     if let Some(si) = &result.system_info {
         lines.push(info_line(format!(
             "CPU Vendor: {}",
-            si.cpu.vendor.clone().unwrap_or_else(|| "unknown".to_string())
+            si.cpu
+                .vendor
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         )));
         lines.push(info_line(format!(
             "CPU Model: {}",
-            si.cpu.model.clone().unwrap_or_else(|| "unknown".to_string())
+            si.cpu
+                .model
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         )));
-        lines.push(info_line(format!("Logical cores: {}", si.cpu.cores_logical)));
+        lines.push(info_line(format!(
+            "Logical cores: {}",
+            si.cpu.cores_logical
+        )));
 
         let ram_display = if si.ram.total_mb >= 1024 {
             format!("{:.2} GB", si.ram.total_mb as f64 / 1024.0)
@@ -230,7 +249,10 @@ fn build_system_info_model(result: &BenchResult) -> ModelRc<InfoLine> {
         lines.push(info_line(format!("RAM Total: {}", ram_display)));
         lines.push(info_line(format!(
             "RAM Type: {}",
-            si.ram.ram_type.clone().unwrap_or_else(|| "unknown".to_string())
+            si.ram
+                .ram_type
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         )));
 
         for d in &si.disks {
@@ -268,34 +290,5 @@ fn build_system_info_model(result: &BenchResult) -> ModelRc<InfoLine> {
 fn info_line(text: String) -> InfoLine {
     InfoLine {
         text: SharedString::from(text.as_str()),
-    }
-}
-
-fn human_bytes(mut bytes: f64) -> String {
-    let units = ["B", "KB", "MB", "GB", "TB"];
-    let mut i = 0;
-    while bytes >= 1024.0 && i < units.len() - 1 {
-        bytes /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{} {}", bytes as u64, units[i])
-    } else {
-        format!("{:.2} {}", bytes, units[i])
-    }
-}
-
-fn unit_for_bench(name: &str) -> &'static str {
-    match name {
-        "CPU Multi-Core" | "CPU Int Math" | "CPU Float Math" | "CPU Prime Calc" | "CPU SSE Ext"
-        | "CPU Physics" | "CPU Sorting" | "CPU UCT Single" => "ops/s",
-        "CPU Compression" | "CPU Encryption" => "MB/s",
-        "Mem DB Ops" => "ops/s",
-        "Mem Cached Read" | "Mem Uncached Read" | "Mem Write" | "Mem Threaded" => "MB/s",
-        "Mem Available" => "MB",
-        "Mem Latency" => "accès/s",
-        "Disk Seq Read" | "Disk Seq Write" => "MB/s",
-        "Disk IOPS 32K QD20" | "Disk IOPS 4K QD1" => "IOPS",
-        _ => "",
     }
 }

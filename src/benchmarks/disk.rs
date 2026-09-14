@@ -12,7 +12,7 @@ use crate::engines::benchmark::Benchmark;
 
 /// Taille des fichiers utilisés pour les tests.
 const SEQ_FILE_SIZE_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
-const RAND_FILE_SIZE_BYTES: u64 = 1 * 1024 * 1024 * 1024; // 1 GiB
+const RAND_FILE_SIZE_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
 
 /// Tailles de blocs.
 const SEQ_BLOCK_SIZE: usize = 1024 * 1024; // 1 MiB
@@ -30,9 +30,27 @@ fn temp_file(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("obenchmark_{}.bin", name))
 }
 
+/// Fichier temporaire de benchmark supprimé automatiquement à la libération,
+/// même en cas d'erreur ou de panique pendant le test.
+struct TestFile {
+    path: PathBuf,
+}
+
+impl TestFile {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TestFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Crée un fichier de taille `target_size` rempli de zéros.
 /// Réduit la taille par 2 en cas d'erreur pour gérer le manque d'espace disque.
-fn create_test_file_best_effort(name: &str, target_size: u64) -> Result<(PathBuf, u64)> {
+fn create_test_file_best_effort(name: &str, target_size: u64) -> Result<(TestFile, u64)> {
     const MIN_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB minimum
 
     let mut size = target_size;
@@ -41,7 +59,7 @@ fn create_test_file_best_effort(name: &str, target_size: u64) -> Result<(PathBuf
 
     while size >= MIN_SIZE {
         match create_file_with_size(&path, size) {
-            Ok(_) => return Ok((path.clone(), size)),
+            Ok(_) => return Ok((TestFile { path }, size)),
             Err(e) => {
                 last_err = Some(e);
                 size /= 2;
@@ -49,6 +67,8 @@ fn create_test_file_best_effort(name: &str, target_size: u64) -> Result<(PathBuf
         }
     }
 
+    // Nettoyage éventuel d'un fichier partiellement créé.
+    let _ = std::fs::remove_file(&path);
     Err(last_err.unwrap_or_else(|| anyhow!("Espace disque insuffisant pour le benchmark disque")))
 }
 
@@ -103,7 +123,7 @@ fn random_read_iops(
 
     for thread_id in 0..queue_depth {
         let path = path.to_owned();
-        let start = start; // Instant est Copy
+        // `Instant` est `Copy` : il est capturé par valeur dans le thread.
 
         let handle = thread::spawn(move || -> Result<u64> {
             let mut rng = StdRng::seed_from_u64(0xD15C_0000 + thread_id as u64);
@@ -129,7 +149,7 @@ fn random_read_iops(
         total_ops += h.join().unwrap_or_else(|_| Ok(0))?;
     }
 
-    let secs = duration.as_secs().max(1) as u64;
+    let secs = duration.as_secs().max(1);
     Ok(total_ops / secs)
 }
 
@@ -146,10 +166,11 @@ impl Benchmark for DiskSequentialRead {
     }
 
     fn run(&self) -> Result<u64> {
-        let (path, size) = create_test_file_best_effort("seq_read", SEQ_FILE_SIZE_BYTES)?;
+        let (test_file, size) = create_test_file_best_effort("seq_read", SEQ_FILE_SIZE_BYTES)?;
+        let path = test_file.path();
 
         // Mesure de la lecture seule.
-        let mut file = OpenOptions::new().read(true).open(&path)?;
+        let mut file = OpenOptions::new().read(true).open(path)?;
         let mut buffer = vec![0u8; SEQ_BLOCK_SIZE];
         let start = Instant::now();
         let mut read_bytes: u64 = 0;
@@ -163,7 +184,7 @@ impl Benchmark for DiskSequentialRead {
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let _ = std::fs::remove_file(&path);
+        // Le fichier est supprimé automatiquement par le `Drop` de `test_file`.
         Ok(bytes_per_sec_to_mb_per_sec(
             std::cmp::min(read_bytes, size),
             elapsed,
@@ -192,11 +213,15 @@ impl Benchmark for DiskSequentialWrite {
             let _ = std::fs::remove_file(&path);
         }
 
+        // Le fichier est supprimé automatiquement à la fin du test.
+        let test_file = TestFile { path };
+        let path = test_file.path();
+
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&path)?;
+            .open(path)?;
 
         let buffer = vec![0u8; SEQ_BLOCK_SIZE];
         let mut remaining = SEQ_FILE_SIZE_BYTES;
@@ -212,7 +237,6 @@ impl Benchmark for DiskSequentialWrite {
         file.sync_all()?;
         let elapsed = start.elapsed().as_secs_f64();
 
-        let _ = std::fs::remove_file(&path);
         Ok(bytes_per_sec_to_mb_per_sec(written, elapsed))
     }
 }
@@ -230,9 +254,8 @@ impl Benchmark for DiskRandomIOPS32K {
     }
 
     fn run(&self) -> Result<u64> {
-        let (path, size) = create_test_file_best_effort("rand_32k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(&path, size, RAND_32K_BLOCK_SIZE, QD_32K)?;
-        let _ = std::fs::remove_file(&path);
+        let (test_file, size) = create_test_file_best_effort("rand_32k", RAND_FILE_SIZE_BYTES)?;
+        let iops = random_read_iops(test_file.path(), size, RAND_32K_BLOCK_SIZE, QD_32K)?;
         Ok(iops)
     }
 }
@@ -250,9 +273,8 @@ impl Benchmark for DiskRandomIOPS4K {
     }
 
     fn run(&self) -> Result<u64> {
-        let (path, size) = create_test_file_best_effort("rand_4k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(&path, size, RAND_4K_BLOCK_SIZE, QD_4K)?;
-        let _ = std::fs::remove_file(&path);
+        let (test_file, size) = create_test_file_best_effort("rand_4k", RAND_FILE_SIZE_BYTES)?;
+        let iops = random_read_iops(test_file.path(), size, RAND_4K_BLOCK_SIZE, QD_4K)?;
         Ok(iops)
     }
 }

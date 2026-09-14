@@ -213,17 +213,18 @@ mod tests {
     fn all_benchmarks_have_positive_weight() {
         for spec in AVAILABLE_BENCHMARKS {
             let bench = spec.build();
-            assert!(bench.weight() > 0, "Benchmark {} has zero weight", bench.name());
+            assert!(
+                bench.weight() > 0,
+                "Benchmark {} has zero weight",
+                bench.name()
+            );
         }
     }
 
     #[test]
     fn all_benchmarks_have_non_empty_name() {
         for spec in AVAILABLE_BENCHMARKS {
-            assert!(
-                !spec.name.is_empty(),
-                "Benchmark has empty name"
-            );
+            assert!(!spec.name.is_empty(), "Benchmark has empty name");
         }
     }
 

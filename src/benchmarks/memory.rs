@@ -1,3 +1,7 @@
+// Les benchmarks mémoire utilisent volontairement des boucles d'indexation
+// explicites pour reproduire des patterns d'accès séquentiels mesurables.
+#![allow(clippy::needless_range_loop)]
+
 use std::hint::black_box;
 use std::thread;
 use std::time::Instant;
@@ -171,7 +175,7 @@ impl Benchmark for MemoryAvailable {
 
     fn run(&self) -> Result<u64> {
         let sys = get_system_info();
-        Ok((sys.available_memory() / 1024) as u64) // MB
+        Ok(sys.available_memory() / 1024) // MB
     }
 }
 

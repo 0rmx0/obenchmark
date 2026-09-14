@@ -158,7 +158,7 @@ impl Benchmark for CpuSSE {
         let mut count: u64 = 0;
         while start.elapsed() < CPU_BENCH_DURATION {
             for i in 0..a.len() {
-                a[i] = a[i] + b[i];
+                a[i] += b[i];
             }
             count += 1;
         }

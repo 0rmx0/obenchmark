@@ -8,6 +8,6 @@ pub enum AppState {
         completed: usize,
         total: usize,
     },
-    Showing(BenchResult),
+    Showing(Box<BenchResult>),
     Error(String),
 }
