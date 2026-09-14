@@ -35,9 +35,9 @@ Each run executes a suite of individual benchmarks; results are normalized and w
 - **Threaded**: concurrent writes in multiple threads.
 
 ### Disk tests
-- **Sequential Read/Write**: 512 MB contiguous ops.
-- **IOPS 32K QD20**: random 32 KB ops with queue depth 20.
-- **IOPS 4K QD1**: random 4 KB ops single queued.
+- **Sequential Read/Write**: 512 MB contiguous ops, bypassing the OS page cache (O_DIRECT / FILE_FLAG_NO_BUFFERING) for accurate device throughput.
+- **IOPS 32K QD20**: random 32 KB **read** ops, queue depth 20.
+- **IOPS 4K QD1**: random 4 KB **write** ops, single queued (latency-bound).
 
 ## Scoring
 Raw results are normalized against predefined baselines per category. Each normalized value is capped to 100 000 to avoid outliers skewing the average. Scores are weighted, averaged, and finally clamped to 999 999 to produce the final score shown in the GUI. This ensures reproducible, comparable numbers across different hardware.

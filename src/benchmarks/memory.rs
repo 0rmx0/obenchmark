@@ -4,13 +4,14 @@
 
 use std::hint::black_box;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rand::seq::SliceRandom;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::engines::benchmark::Benchmark;
+use crate::util::measure::median_of_passes;
 use crate::util::sysinfo::get_system_info;
 
 /// Taille par défaut des gros buffers mémoire utilisés pour les tests séquentiels.
@@ -22,6 +23,14 @@ const MAX_FRACTION_OF_RAM: f64 = 0.25; // 25%
 
 fn bytes_to_mb(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
+}
+
+/// Mesure reproductible : 1 passe de chauffe + 3 passes mesurées, médiane renvoyée.
+fn measured<F>(sample: F) -> u64
+where
+    F: FnMut(Duration) -> u64,
+{
+    median_of_passes(1, 3, sample)
 }
 
 /// Choisit une taille de buffer raisonnable en fonction de la RAM disponible.
@@ -54,17 +63,27 @@ impl Benchmark for MemoryDBOps {
     }
 
     fn run(&self) -> Result<u64> {
-        let mut db: Vec<u64> = Vec::with_capacity(1_000_000);
-        let start = Instant::now();
-        for i in 0..1_000_000_u64 {
-            db.push(i);
-            let idx = (i / 2) as usize;
-            let _ = black_box(db[idx]);
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        let ops = (2_000_000.0 / elapsed) as u64; // approx operations per second
-        black_box(&db);
-        Ok(ops)
+        Ok(measured(|budget| {
+            let mut db: Vec<u64> = Vec::with_capacity(1_000_000);
+            let start = Instant::now();
+            let mut ops: u64 = 0;
+            let mut i: u64 = 0;
+            while start.elapsed() < budget {
+                db.push(i);
+                let idx = (i / 2) as usize;
+                let _ = black_box(db[idx]);
+                ops += 2; // 1 push + 1 read par itération
+                i = i.wrapping_add(1);
+                if i >= 1_000_000 {
+                    i = 0;
+                    db.clear();
+                    db.reserve(1_000_000);
+                }
+            }
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            black_box(&db);
+            (ops as f64 / elapsed) as u64
+        }))
     }
 }
 
@@ -80,22 +99,25 @@ impl Benchmark for MemoryCachedRead {
     }
 
     fn run(&self) -> Result<u64> {
-        let size = 8 * 1024 * 1024; // 8 MiB
-        let data = vec![0u8; size];
-        let start = Instant::now();
-        let mut sum = 0u64;
-        let iterations = 200u64;
-        for _ in 0..iterations {
-            for &b in &data {
-                sum = sum.wrapping_add(b as u64);
+        // 32 KiB : typiquement dans le L1/L2, mesure la bande passante de cache.
+        // Lecture par mots de 64 bits (style STREAM) plutôt qu'octet par octet,
+        // pour mesurer la vraie bande passante du cache et non la surcharge de boucle.
+        const SIZE: usize = 32 * 1024;
+        let data = vec![0u64; SIZE / 8];
+        Ok(measured(|budget| {
+            let start = Instant::now();
+            let mut sum = 0u64;
+            let mut total_bytes: u64 = 0;
+            while start.elapsed() < budget {
+                for &w in &data {
+                    sum = sum.wrapping_add(w);
+                }
+                total_bytes += SIZE as u64;
             }
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        black_box(sum);
-
-        let total_bytes = size as u64 * iterations;
-        let mb = bytes_to_mb(total_bytes);
-        Ok((mb / elapsed.max(1e-6)) as u64)
+            black_box(sum);
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            (bytes_to_mb(total_bytes) / elapsed) as u64
+        }))
     }
 }
 
@@ -112,25 +134,28 @@ impl Benchmark for MemoryUncachedRead {
 
     fn run(&self) -> Result<u64> {
         let size_bytes = choose_buffer_size_bytes(DEFAULT_STREAM_MEM_BYTES, MIN_STREAM_MEM_BYTES);
-        let size = size_bytes as usize;
-
-        let mut data = vec![0u8; size];
-
+        let words = (size_bytes as usize) / 8;
+        let mut data = vec![0u64; words];
         // Pré-chauffe : toucher toutes les pages pour éviter de mesurer les fautes de page.
-        for b in &mut data {
-            *b = b.wrapping_add(1);
+        for w in &mut data {
+            *w = w.wrapping_add(1);
         }
 
-        let start = Instant::now();
-        let mut sum = 0u64;
-        for &b in &data {
-            sum = sum.wrapping_add(b as u64);
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        black_box(sum);
-
-        let mb = bytes_to_mb(size_bytes);
-        Ok((mb / elapsed.max(1e-6)) as u64)
+        Ok(measured(|budget| {
+            let start = Instant::now();
+            let mut sum = 0u64;
+            let mut passes: u64 = 0;
+            while start.elapsed() < budget {
+                for &w in &data {
+                    sum = sum.wrapping_add(w);
+                }
+                passes += 1;
+            }
+            black_box(sum);
+            let total_bytes = (words as u64) * 8 * passes;
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            (bytes_to_mb(total_bytes) / elapsed) as u64
+        }))
     }
 }
 
@@ -147,18 +172,24 @@ impl Benchmark for MemoryWrite {
 
     fn run(&self) -> Result<u64> {
         let size_bytes = choose_buffer_size_bytes(DEFAULT_STREAM_MEM_BYTES, MIN_STREAM_MEM_BYTES);
-        let size = size_bytes as usize;
-        let mut data = vec![0u8; size];
-        let start = Instant::now();
-        for i in 0..size {
-            data[i] = (i & 0xFF) as u8;
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        // Empêche l'optimisation agressive de la boucle.
-        black_box(&data[0..std::cmp::min(1024, size)]);
-
-        let mb = bytes_to_mb(size_bytes);
-        Ok((mb / elapsed.max(1e-6)) as u64)
+        let words = (size_bytes as usize) / 8;
+        let mut data = vec![0u64; words];
+        Ok(measured(|budget| {
+            let start = Instant::now();
+            let mut passes: u64 = 0;
+            let mut pattern: u64 = 0xA5A5_A5A5_A5A5_A5A5;
+            while start.elapsed() < budget {
+                for w in &mut data {
+                    *w = pattern;
+                    pattern = pattern.wrapping_add(0x0102_0304_0506_0708);
+                }
+                passes += 1;
+            }
+            black_box(&data[0..std::cmp::min(1024, words)]);
+            let total_bytes = (words as u64) * 8 * passes;
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            (bytes_to_mb(total_bytes) / elapsed) as u64
+        }))
     }
 }
 
@@ -170,7 +201,7 @@ impl Benchmark for MemoryAvailable {
     }
 
     fn weight(&self) -> u64 {
-        1
+        0 // Caractéristique système, pas une performance : hors du scoring.
     }
 
     fn run(&self) -> Result<u64> {
@@ -206,22 +237,23 @@ impl Benchmark for MemoryLatency {
             next[from] = to;
         }
 
-        let mut idx = 0usize;
-        let steps: usize = 20_000_000;
-        let start = Instant::now();
-        for _ in 0..steps {
-            // Accès pointer-chasing : chaque accès dépend du précédent.
-            // get_unchecked est sûr ici car `next` est un cycle valide.
-            unsafe {
-                idx = *next.get_unchecked(idx);
+        // Mesure reproductible : on compte les accès sur un budget de temps.
+        Ok(measured(|budget| {
+            let mut idx = 0usize;
+            let start = Instant::now();
+            let mut accesses: u64 = 0;
+            while start.elapsed() < budget {
+                // Accès pointer-chasing : chaque accès dépend du précédent.
+                unsafe {
+                    idx = *next.get_unchecked(idx);
+                }
+                accesses += 1;
             }
-        }
-        let elapsed_secs = start.elapsed().as_secs_f64();
-        black_box(idx);
-
-        // Convertir en accès par seconde (plus élevé = mieux)
-        let accesses_per_sec = (steps as f64) / elapsed_secs.max(1e-6);
-        Ok(accesses_per_sec as u64)
+            black_box(idx);
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            // Convertir en accès par seconde (plus élevé = meilleure latence).
+            (accesses as f64 / elapsed) as u64
+        }))
     }
 }
 
@@ -245,23 +277,39 @@ impl Benchmark for MemoryThreaded {
         let per_thread_cap = (total_bytes / 2) / threads as u64;
         let size_bytes = std::cmp::min(per_thread_default, per_thread_cap);
         let size = size_bytes as usize;
-        let start = Instant::now();
-        let mut handles = Vec::new();
-        for _ in 0..threads {
-            handles.push(thread::spawn(move || {
-                let mut local = vec![0u8; size];
-                for i in 0..local.len() {
-                    local[i] = (i % 255) as u8;
+
+        // Pré-allouer les buffers de chaque thread hors du timer pour mesurer
+        // uniquement la bande passante d'écriture, pas l'allocation.
+        Ok(measured(|budget| {
+            let start = Instant::now();
+            let mut passes: u64 = 0;
+            while start.elapsed() < budget {
+                let mut handles = Vec::with_capacity(threads);
+                for _ in 0..threads {
+                    handles.push(thread::spawn(move || -> u64 {
+                        let mut local = vec![0u64; size / 8];
+                        let mut p: u64 = 0x5A5A_5A5A_5A5A_5A5A;
+                        for w in &mut local {
+                            *w = p;
+                            p = p.wrapping_add(0x0807_0605_0403_0201);
+                        }
+                        black_box(&local[0..std::cmp::min(128, local.len())]);
+                        (local.len() * 8) as u64
+                    }));
                 }
-                black_box(&local[0..std::cmp::min(1024, local.len())]);
-            }));
-        }
-        for h in handles {
-            h.join().ok();
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        let total_bytes = size_bytes * threads as u64;
-        let mb = bytes_to_mb(total_bytes);
-        Ok((mb / elapsed.max(1e-6)) as u64)
+                let mut all_done = true;
+                for h in handles {
+                    if h.join().unwrap_or(0) == 0 {
+                        all_done = false;
+                    }
+                }
+                if all_done {
+                    passes += 1;
+                }
+            }
+            let total_bytes_written = size_bytes * threads as u64 * passes.max(1);
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            (bytes_to_mb(total_bytes_written) / elapsed) as u64
+        }))
     }
 }

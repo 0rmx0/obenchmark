@@ -1,5 +1,3 @@
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -9,6 +7,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::engines::benchmark::Benchmark;
+use crate::util::io::{align_down, open_read, open_rw, open_write, pread, pwrite, AlignedBuffer};
 
 /// Taille des fichiers utilisés pour les tests.
 const SEQ_FILE_SIZE_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
@@ -25,6 +24,10 @@ const RANDOM_TEST_DURATION_SECS: u64 = 5;
 /// Profondeurs de file approximatives (nb de threads).
 const QD_32K: usize = 20; // "QD20"
 const QD_4K: usize = 1; // "QD1"
+
+/// Chauffe + passes répétées pour les mesures séquentielles.
+const SEQ_WARMUP: usize = 1;
+const SEQ_PASSES: usize = 3;
 
 fn temp_file(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("obenchmark_{}.bin", name))
@@ -48,7 +51,8 @@ impl Drop for TestFile {
     }
 }
 
-/// Crée un fichier de taille `target_size` rempli de zéros.
+/// Crée un fichier de taille `target_size` rempli de zéros, via E/S alignées
+/// lorsque le mode direct est supporté (ainsi le contenu est bien sur disque).
 /// Réduit la taille par 2 en cas d'erreur pour gérer le manque d'espace disque.
 fn create_test_file_best_effort(name: &str, target_size: u64) -> Result<(TestFile, u64)> {
     const MIN_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB minimum
@@ -80,18 +84,47 @@ fn create_file_with_size(path: &Path, size: u64) -> Result<()> {
         let _ = std::fs::remove_file(path);
     }
 
-    let mut file = File::create(path)?;
+    // Pré-allocation de la taille finale ( évite la fragmentation ).
+    {
+        let file = std::fs::File::create(path)?;
+        file.set_len(size)?;
+    }
 
-    // Pré-allocation + écriture séquentielle avec un buffer de 1 MiB.
-    // On ne mesure PAS ce temps dans les scores.
-    file.set_len(size)?;
+    // Remplissage du fichier avec des données pseudo-aléatoires via E/S directs
+    // si possible, pour s'assurer que le contenu n'est pas une sparse region
+    // (qui serait lue depuis zéro sans toucher le disque).
+    fill_file(path, size)?;
+    Ok(())
+}
 
-    let buffer = vec![0u8; SEQ_BLOCK_SIZE];
-    let mut remaining = size;
-    while remaining > 0 {
-        let to_write = std::cmp::min(remaining, buffer.len() as u64) as usize;
-        file.write_all(&buffer[..to_write])?;
-        remaining -= to_write as u64;
+fn fill_file(path: &Path, size: u64) -> Result<()> {
+    let (file, _direct) = open_write(path).or_else(|_| {
+        // Repli tamponné si l'ouverture directe échoue.
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .map(|f| (f, false))
+    })?;
+
+    let block = SEQ_BLOCK_SIZE;
+    let mut buf = AlignedBuffer::zeroed(block);
+    // Remplissage pseudo-aléatoire déterministe pour éviter les sparse regions.
+    // Graine hex pure (les lettres non-hex casseraient le lexage du littéral).
+    let mut rng = StdRng::seed_from_u64(0x0DEADBEEF00DCAFE);
+    for b in buf.as_mut_slice() {
+        *b = rng.gen();
+    }
+
+    let mut offset: u64 = 0;
+    while offset < size {
+        let to_write = std::cmp::min(block as u64, size - offset) as usize;
+        let n = pwrite(&file, &buf.as_slice()[..to_write], offset)?;
+        if n == 0 {
+            return Err(anyhow!("écriture nulle pendant le remplissage"));
+        }
+        offset += n as u64;
     }
     file.sync_all()?;
     Ok(())
@@ -105,42 +138,67 @@ fn bytes_per_sec_to_mb_per_sec(bytes: u64, secs: f64) -> u64 {
     (mb / secs) as u64
 }
 
-fn random_read_iops(
+/// Sens d'E/S aléatoire.
+#[derive(Clone, Copy)]
+enum IoDir {
+    Read,
+    Write,
+}
+
+/// IOPS aléatoires via E/S positionnels (pread/pwrite), contournant le cache OS.
+/// Chaque thread garde son propre fichier pour éviter la contention du descripteur.
+fn random_iops(
     path: &Path,
     file_size: u64,
     block_size: usize,
     queue_depth: usize,
+    dir: IoDir,
 ) -> Result<u64> {
     let duration = Duration::from_secs(RANDOM_TEST_DURATION_SECS);
-    let start = Instant::now();
-
-    // Limite supérieure pour les offsets aléatoires.
-    let max_offset = file_size
-        .checked_sub(block_size as u64)
-        .ok_or_else(|| anyhow!("Fichier de test trop petit pour la taille de bloc"))?;
+    let max_offset = align_down(
+        file_size
+            .checked_sub(block_size as u64)
+            .ok_or_else(|| anyhow!("Fichier de test trop petit pour la taille de bloc"))?,
+        block_size as u64,
+    );
 
     let mut handles = Vec::with_capacity(queue_depth);
-
     for thread_id in 0..queue_depth {
         let path = path.to_owned();
-        // `Instant` est `Copy` : il est capturé par valeur dans le thread.
-
         let handle = thread::spawn(move || -> Result<u64> {
             let mut rng = StdRng::seed_from_u64(0xD15C_0000 + thread_id as u64);
-            let mut file = OpenOptions::new().read(true).open(&path)?;
-            let mut buffer = vec![0u8; block_size];
-            let mut ops: u64 = 0;
-
-            while start.elapsed() < duration {
-                let offset = rng.gen_range(0..=max_offset);
-                file.seek(SeekFrom::Start(offset))?;
-                file.read_exact(&mut buffer)?;
-                ops += 1;
+            // Un descripteur par thread : évite les seeks concurrents.
+            let (file, _direct) = open_rw(&path)?;
+            let mut buf = AlignedBuffer::zeroed(block_size);
+            // Chauffe : on ignore quelques opérations pour stabiliser.
+            for _ in 0..16 {
+                let off = align_down(rng.gen_range(0..=max_offset), block_size as u64);
+                match dir {
+                    IoDir::Read => {
+                        pread(&file, buf.as_mut_slice(), off)?;
+                    }
+                    IoDir::Write => {
+                        pwrite(&file, buf.as_slice(), off)?;
+                    }
+                }
             }
 
+            let start = Instant::now();
+            let mut ops: u64 = 0;
+            while start.elapsed() < duration {
+                let offset = align_down(rng.gen_range(0..=max_offset), block_size as u64);
+                match dir {
+                    IoDir::Read => {
+                        pread(&file, buf.as_mut_slice(), offset)?;
+                    }
+                    IoDir::Write => {
+                        pwrite(&file, buf.as_slice(), offset)?;
+                    }
+                }
+                ops += 1;
+            }
             Ok(ops)
         });
-
         handles.push(handle);
     }
 
@@ -148,12 +206,11 @@ fn random_read_iops(
     for h in handles {
         total_ops += h.join().unwrap_or_else(|_| Ok(0))?;
     }
-
     let secs = duration.as_secs().max(1);
     Ok(total_ops / secs)
 }
 
-/// Lecture séquentielle gros blocs (MB/s).
+/// Lecture séquentielle gros blocs (MB/s), en contournant le cache OS.
 pub struct DiskSequentialRead;
 
 impl Benchmark for DiskSequentialRead {
@@ -169,30 +226,33 @@ impl Benchmark for DiskSequentialRead {
         let (test_file, size) = create_test_file_best_effort("seq_read", SEQ_FILE_SIZE_BYTES)?;
         let path = test_file.path();
 
-        // Mesure de la lecture seule.
-        let mut file = OpenOptions::new().read(true).open(path)?;
-        let mut buffer = vec![0u8; SEQ_BLOCK_SIZE];
-        let start = Instant::now();
-        let mut read_bytes: u64 = 0;
-
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
+        let mut samples: Vec<u64> = Vec::with_capacity(SEQ_PASSES);
+        for pass in 0..(SEQ_WARMUP + SEQ_PASSES) {
+            let (file, _direct) = open_read(path)?;
+            let mut buf = AlignedBuffer::zeroed(SEQ_BLOCK_SIZE);
+            let start = Instant::now();
+            let mut offset: u64 = 0;
+            let mut read_bytes: u64 = 0;
+            while offset < size {
+                let n = pread(&file, buf.as_mut_slice(), offset)?;
+                if n == 0 {
+                    break;
+                }
+                read_bytes += n as u64;
+                offset += n as u64;
             }
-            read_bytes += n as u64;
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            let mbps = bytes_per_sec_to_mb_per_sec(std::cmp::min(read_bytes, size), elapsed);
+            if pass >= SEQ_WARMUP {
+                samples.push(mbps);
+            }
         }
-
-        let elapsed = start.elapsed().as_secs_f64();
         // Le fichier est supprimé automatiquement par le `Drop` de `test_file`.
-        Ok(bytes_per_sec_to_mb_per_sec(
-            std::cmp::min(read_bytes, size),
-            elapsed,
-        ))
+        Ok(median_u64(&samples))
     }
 }
 
-/// Écriture séquentielle gros blocs (MB/s).
+/// Écriture séquentielle gros blocs (MB/s), en contournant le cache OS.
 pub struct DiskSequentialWrite;
 
 impl Benchmark for DiskSequentialWrite {
@@ -205,39 +265,39 @@ impl Benchmark for DiskSequentialWrite {
     }
 
     fn run(&self) -> Result<u64> {
-        let path = temp_file("seq_write");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let mut samples: Vec<u64> = Vec::with_capacity(SEQ_PASSES);
+        for pass in 0..(SEQ_WARMUP + SEQ_PASSES) {
+            let test_file = TestFile {
+                path: temp_file("seq_write"),
+            };
+            let path = test_file.path();
+            let (file, _direct) = open_write(path)?;
+            let mut buf = AlignedBuffer::zeroed(SEQ_BLOCK_SIZE);
+            // Données pseudo-aléatoires pour éviter la compression transparente.
+            let mut rng = StdRng::seed_from_u64(0x5ECA + pass as u64);
+            for b in buf.as_mut_slice() {
+                *b = rng.gen();
+            }
+
+            let start = Instant::now();
+            let mut offset: u64 = 0;
+            while offset < SEQ_FILE_SIZE_BYTES {
+                let to_write =
+                    std::cmp::min(SEQ_BLOCK_SIZE as u64, SEQ_FILE_SIZE_BYTES - offset) as usize;
+                let n = pwrite(&file, &buf.as_slice()[..to_write], offset)?;
+                if n == 0 {
+                    break;
+                }
+                offset += n as u64;
+            }
+            file.sync_all()?;
+            let elapsed = start.elapsed().as_secs_f64().max(1e-9);
+            let mbps = bytes_per_sec_to_mb_per_sec(SEQ_FILE_SIZE_BYTES, elapsed);
+            if pass >= SEQ_WARMUP {
+                samples.push(mbps);
+            }
         }
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-        }
-
-        // Le fichier est supprimé automatiquement à la fin du test.
-        let test_file = TestFile { path };
-        let path = test_file.path();
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-
-        let buffer = vec![0u8; SEQ_BLOCK_SIZE];
-        let mut remaining = SEQ_FILE_SIZE_BYTES;
-
-        let start = Instant::now();
-        let mut written: u64 = 0;
-        while remaining > 0 {
-            let to_write = std::cmp::min(remaining, buffer.len() as u64) as usize;
-            file.write_all(&buffer[..to_write])?;
-            written += to_write as u64;
-            remaining -= to_write as u64;
-        }
-        file.sync_all()?;
-        let elapsed = start.elapsed().as_secs_f64();
-
-        Ok(bytes_per_sec_to_mb_per_sec(written, elapsed))
+        Ok(median_u64(&samples))
     }
 }
 
@@ -255,12 +315,18 @@ impl Benchmark for DiskRandomIOPS32K {
 
     fn run(&self) -> Result<u64> {
         let (test_file, size) = create_test_file_best_effort("rand_32k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(test_file.path(), size, RAND_32K_BLOCK_SIZE, QD_32K)?;
+        let iops = random_iops(
+            test_file.path(),
+            size,
+            RAND_32K_BLOCK_SIZE,
+            QD_32K,
+            IoDir::Read,
+        )?;
         Ok(iops)
     }
 }
 
-/// IOPS en lecture aléatoire 4K queue depth 1 (latence).
+/// IOPS en écriture aléatoire 4K queue depth 1 (latence).
 pub struct DiskRandomIOPS4K;
 
 impl Benchmark for DiskRandomIOPS4K {
@@ -274,7 +340,27 @@ impl Benchmark for DiskRandomIOPS4K {
 
     fn run(&self) -> Result<u64> {
         let (test_file, size) = create_test_file_best_effort("rand_4k", RAND_FILE_SIZE_BYTES)?;
-        let iops = random_read_iops(test_file.path(), size, RAND_4K_BLOCK_SIZE, QD_4K)?;
+        let iops = random_iops(
+            test_file.path(),
+            size,
+            RAND_4K_BLOCK_SIZE,
+            QD_4K,
+            IoDir::Write,
+        )?;
         Ok(iops)
+    }
+}
+
+fn median_u64(values: &[u64]) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut v = values.to_vec();
+    v.sort_unstable();
+    let mid = v.len() / 2;
+    if v.len().is_multiple_of(2) {
+        (v[mid - 1] + v[mid]) / 2
+    } else {
+        v[mid]
     }
 }

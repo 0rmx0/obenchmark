@@ -213,8 +213,9 @@ mod tests {
     fn all_benchmarks_have_positive_weight() {
         for spec in AVAILABLE_BENCHMARKS {
             let bench = spec.build();
+            // Mem Available est une caractéristique système (poids 0, hors scoring).
             assert!(
-                bench.weight() > 0,
+                bench.weight() > 0 || bench.name() == "Mem Available",
                 "Benchmark {} has zero weight",
                 bench.name()
             );
@@ -345,7 +346,8 @@ mod tests {
     fn test_mem_available_builder() {
         let bench = build_mem_available();
         assert_eq!(bench.name(), "Mem Available");
-        assert_eq!(bench.weight(), 1);
+        // Poids 0 : caractéristique système hors scoring.
+        assert_eq!(bench.weight(), 0);
     }
 
     #[test]
@@ -396,7 +398,7 @@ mod tests {
             let bench = spec.build();
             // Just verify it can be built without panicking
             assert!(!bench.name().is_empty());
-            assert!(bench.weight() > 0);
+            assert!(bench.weight() > 0 || bench.name() == "Mem Available");
         }
     }
 
