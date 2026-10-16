@@ -173,6 +173,7 @@ export component MainWindow inherits Window {
     default-font-family: "Help Me";
 
     in-out property <string> status: "idle";
+    in-out property <string> app-version: "";
     in-out property <string> current-test: "";
     in-out property <float> progress: 0.0;
     in-out property <string> error-message: "";
@@ -227,13 +228,25 @@ export component MainWindow inherits Window {
 
             VerticalLayout {
                 alignment: center;
-                Text {
-                    text: "OBENCHMARK";
-                    font-family: "Help Me";
-                    font-size: 20px;
-                    font-weight: 700;
-                    letter-spacing: 4px;
-                    color: Palette.text-bright;
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text {
+                        text: "OBENCHMARK";
+                        font-family: "Help Me";
+                        font-size: 20px;
+                        font-weight: 700;
+                        letter-spacing: 4px;
+                        color: Palette.text-bright;
+                    }
+                    Text {
+                        text: "v" + root.app-version;
+                        font-family: "Help Me";
+                        font-size: 11px;
+                        letter-spacing: 2px;
+                        color: Palette.cyan;
+                        vertical-alignment: center;
+                    }
                 }
                 Text {
                     text: "SYSTEM PERFORMANCE ANALYSIS";

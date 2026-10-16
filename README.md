@@ -42,6 +42,16 @@ Each run executes a suite of individual benchmarks; results are normalized and w
 ## Scoring
 Raw results are normalized against predefined baselines per category. Each normalized value is capped to 10 000 to avoid outliers skewing the average. Scores are weighted, averaged, and finally clamped to at most five decimal digits (≤ 99999) to produce the final score shown in the GUI. This ensures reproducible, comparable numbers across different hardware.
 
+## Releases
+
+The current version is defined in [`Cargo.toml`](Cargo.toml) and displayed in the GUI header and by `obenchmark cli --version`.
+
+Releases are published automatically. To publish a release:
+
+1. Update `version` in `Cargo.toml` and commit the change.
+2. Tag the commit: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The [Release workflow](.github/workflows/release.yml) builds Linux, macOS and Windows binaries and publishes a GitHub Release with a detailed changelog (merged pull requests and commits since the previous tag).
+
 ## Usage
 Build and run with `cargo run` or use the provided binary. Click **Start Benchmark** to begin; the GUI will display progress and final results. You can export a JSON file of the scores using the corresponding button or restart the tests with the "New Analysis" button.
 

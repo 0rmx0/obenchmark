@@ -1,0 +1,228 @@
+# ------------------------------------------------------------
+# GitHub Actions – OBenchmark Automatic Release
+# Triggered by pushing a version tag (vX.Y.Z)
+# Builds Linux / macOS / Windows and publishes a GitHub Release
+# with a detailed changelog extracted from commits and merged PRs.
+# ------------------------------------------------------------
+name: OBenchmark – Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+env:
+  BINARY_NAME: obenchmark
+
+jobs:
+  # ==========================================================
+  # 🐧 Linux
+  # ==========================================================
+  build-linux:
+    name: Build Release (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
+            libwayland-dev libxkbcommon-dev \
+            libudev-dev \
+            libvulkan-dev \
+            libfontconfig1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: linux-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Cache target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: linux-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: linux-target-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Archive binary
+        run: tar -czvf ${{ env.BINARY_NAME }}-linux.tar.gz -C target/release ${{ env.BINARY_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-linux
+          path: ${{ env.BINARY_NAME }}-linux.tar.gz
+          retention-days: 5
+
+  # ==========================================================
+  # 🍎 macOS
+  # ==========================================================
+  build-macos:
+    name: Build Release (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-cargo-
+
+      - name: Cache target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: macos-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-target-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Archive binary
+        run: tar -czvf ${{ env.BINARY_NAME }}-macos.tar.gz -C target/release ${{ env.BINARY_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-macos
+          path: ${{ env.BINARY_NAME }}-macos.tar.gz
+          retention-days: 5
+
+  # ==========================================================
+  # 🪟 Windows
+  # ==========================================================
+  build-windows:
+    name: Build Release (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      - name: Cache target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: windows-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: windows-target-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Archive binary
+        run: |
+          Compress-Archive `
+            -Path target\release\${{ env.BINARY_NAME }}.exe `
+            -DestinationPath ${{ env.BINARY_NAME }}-windows.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-windows
+          path: ${{ env.BINARY_NAME }}-windows.zip
+          retention-days: 5
+
+  # ==========================================================
+  # 🚀 Publish GitHub Release with detailed changelog
+  # ==========================================================
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-macos, build-windows]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p assets
+          find dist -type f -exec cp {} assets/ \;
+          ls -l assets
+
+      - name: Generate detailed changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG="$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n 1 || true)"
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            RANGE="$(git rev-list --max-parents=0 HEAD | head -n 1)..HEAD"
+          fi
+
+          # Merged PRs since the previous tag
+          if [ -n "$PREV_TAG" ]; then
+            PREV_DATE="$(git log -1 --pretty=%cI "${PREV_TAG}")"
+            gh pr list --state merged --limit 200 --json number,title,author,mergedAt \
+              --jq ".[] | select(.mergedAt > \"${PREV_DATE}\")" > /tmp/prs.json || true
+          else
+            gh pr list --state merged --limit 200 --json number,title,author > /tmp/prs.json || true
+          fi
+
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "### Pull Requests"
+            if [ -s /tmp/prs.json ]; then
+              jq -r '.[] | "- \(.title) (#\(.number)) @\(.author.login)"' /tmp/prs.json
+            else
+              echo "- None"
+            fi
+            echo ""
+            echo "### Commits"
+            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges || true
+            echo ""
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo "**Full Changelog**: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } > changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          body_path: changelog.md
+          generate_release_notes: true
