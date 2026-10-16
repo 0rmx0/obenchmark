@@ -18,6 +18,7 @@ slint::include_modules!();
 
 pub fn run_gui() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
+    ui.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
 
     let state = Rc::new(RefCell::new(AppState::Idle));
     let receiver: Rc<RefCell<Option<Receiver<RunnerEvent>>>> = Rc::new(RefCell::new(None));
