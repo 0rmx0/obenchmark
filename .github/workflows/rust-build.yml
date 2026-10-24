@@ -113,6 +113,10 @@ jobs:
 
       - name: Build release
         shell: bash
+        env:
+          # Cross-compilation (RISC-V): resolve fontconfig at runtime via dlopen
+          # instead of linking, since the cross image lacks riscv64 fontconfig libs
+          RUST_FONTCONFIG_DLOPEN: ${{ matrix.cross && '1' || '' }}
         run: |
           if [ -n "${{ matrix.cross }}" ]; then
             cross build --release --target ${{ matrix.target }}
