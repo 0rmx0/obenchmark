@@ -1,8 +1,6 @@
 import "../ui/fonts/HelpMe.ttf";
 // Police de marque R_M_X. Nom de famille embarqué dans le fichier : "Help Me"
-// (avec un espace) — c'est ce nom exact qu'il faut utiliser dans font-family ci-dessous.
-
-import { ScrollView } from "std-widgets.slint";
+// (avec un espace) — c'est ce nom exact qu'il faut utiliser ci-dessous.
 
 export struct ScoreRow {
     name: string,
@@ -14,152 +12,190 @@ export struct InfoLine {
 }
 
 // ---------------------------------------------------------------------
-// Design tokens — Charte graphique R_M_X v2.0 (Dark Streetwear / Horror Punk / Cyberpunk)
+// Charte Terminal R_M_X v2 : vert CRT sur noir-vert, une seule teinte,
+// un seul halo, un seul mouvement (le curseur █ qui clignote).
 // ---------------------------------------------------------------------
 global Palette {
-    // Palette v2
-    out property <color> bg-void: #050505;         // Noir Absolu — fond principal
-    out property <color> bg-panel: #111111;         // Noir Charbon — fond panneaux
-    out property <color> bg-panel-hover: #1c1c1c;   // variation entre Noir Charbon et Gris Anthracite
-    out property <color> border-idle: #232323;      // Gris Anthracite — bordures fines
-    out property <color> border-strong: #3a3a3a;
-    out property <color> text-dim: #6e6b64;         // dérivé grisé du Blanc Cassé
-    out property <color> text-mid: #b3afa4;         // dérivé clair du Blanc Cassé
-    out property <color> text-bright: #f5f2ea;      // Blanc Cassé — texte principal
-
-    out property <color> cyan: #7af9ff;             // Cyan Glacial — accent / glow au survol
-    out property <color> cyan-dim: #3f8a8f;
-    out property <color> rose: #ff7a92;             // Rose Néon — accent secondaire
-    out property <color> rose-dim: #8a4451;
-    out property <color> rouge: #b8323b;            // Rouge Enfer — alerte / danger
-    out property <color> rouge-dim: #5e1a1f;
-
-    // Formes : direction "brutalist composition" / gravure -> coins presque droits
-    out property <length> radius: 2px;
+    out property <color> bg: #0A0F0A;   // noir-vert — fond unique
+    out property <color> crt: #33FF66;   // vert CRT — seule teinte
+    out property <color> halo: #33FF66.with-alpha(0.55); // seul halo admis
+    out property <color> line: #33FF66.with-alpha(0.35); // séparateurs / bordures
+    out property <color> dim: #33FF66.with-alpha(0.55);  // texte secondaire
+    out property <color> faint: #33FF66.with-alpha(0.20);
 }
 
 // ---------------------------------------------------------------------
 // Primitives
 // ---------------------------------------------------------------------
-component HairlineDivider inherits Rectangle {
+component Hairline inherits Rectangle {
     height: 1px;
-    background: Palette.border-idle;
+    background: Palette.line;
 }
 
-component StatusDot inherits Rectangle {
-    in property <color> tone: Palette.text-dim;
-    in property <bool> pulsing: false;
-
-    width: 7px;
-    height: 7px;
-    background: root.tone;
-    border-width: 1px;
-    border-color: root.tone.darker(0.2);
-
-    property <bool> pulse-phase: false;
-    drop-shadow-color: root.pulsing ? Palette.cyan.with-alpha(root.pulse-phase ? 0.75 : 0.15) : transparent;
-    drop-shadow-blur: root.pulsing ? (root.pulse-phase ? 9px : 3px) : 0px;
-    animate drop-shadow-color, drop-shadow-blur { duration: 900ms; easing: ease-in-out; }
-
+component CrtCursor inherits Text {
+    text: "█";
+    color: Palette.crt;
+    property <bool> phase: true;
+    visible: root.phase;
     Timer {
-        interval: 900ms;
-        running: root.pulsing;
-        triggered => { root.pulse-phase = !root.pulse-phase; }
+        interval: 500ms;
+        running: true;
+        triggered => { root.phase = !root.phase; }
     }
 }
 
-component NoirButton inherits Rectangle {
+component StatusLED inherits Rectangle {
+    in property <bool> active: false;
+    width: 8px;
+    height: 8px;
+    background: Palette.crt;
+    drop-shadow-color: root.active ? Palette.halo : transparent;
+    drop-shadow-blur: root.active ? 6px : 0px;
+}
+
+component HaloText inherits Rectangle {
     in property <string> text;
-    in property <color> tone: Palette.cyan;
+    in property <length> font-size: 14px;
+    in property <int> font-weight: 400;
+    in property <length> letter-spacing: 0px;
+    in property <color> tone: Palette.crt;
+    in property <bool> center: false;
+
+    width: 100%;
+    height: main-text.preferred-height;
+
+    Text {
+        x: -1px;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        letter-spacing: root.letter-spacing;
+        color: root.tone.with-alpha(0.25);
+        width: 100%;
+        horizontal-alignment: root.center ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
+    }
+    Text {
+        x: 1px;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        letter-spacing: root.letter-spacing;
+        color: root.tone.with-alpha(0.25);
+        width: 100%;
+        horizontal-alignment: root.center ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
+    }
+    Text {
+        y: -1px;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        letter-spacing: root.letter-spacing;
+        color: root.tone.with-alpha(0.25);
+        width: 100%;
+        horizontal-alignment: root.center ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
+    }
+    Text {
+        y: 1px;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        letter-spacing: root.letter-spacing;
+        color: root.tone.with-alpha(0.25);
+        width: 100%;
+        horizontal-alignment: root.center ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
+    }
+    main-text := Text {
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        letter-spacing: root.letter-spacing;
+        color: root.tone;
+        width: 100%;
+        horizontal-alignment: root.center ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
+    }
+}
+
+component CrtButton inherits Rectangle {
+    in property <string> text;
     callback clicked <=> touch.clicked;
 
     height: 42px;
-    border-radius: Palette.radius;
-    background: touch.pressed ? Palette.bg-void : (touch.has-hover ? Palette.bg-panel-hover : Palette.bg-panel);
+    horizontal-stretch: 1;
     border-width: 1px;
-    border-color: touch.has-hover ? root.tone : Palette.border-idle;
-    // Spec charte v2 (UI) : "Glow cyan au survol" — glow toujours en Cyan Glacial,
-    // indépendamment de la couleur sémantique du bouton (ex: bouton danger en Rouge Enfer).
-    drop-shadow-color: touch.has-hover ? Palette.cyan.with-alpha(0.35) : transparent;
-    drop-shadow-blur: touch.has-hover ? 12px : 0px;
+    border-color: touch.has-hover ? Palette.crt : Palette.line;
+    background: touch.has-hover ? Palette.crt : Palette.bg;
+    drop-shadow-color: touch.has-hover ? Palette.halo : transparent;
+    drop-shadow-blur: touch.has-hover ? 6px : 0px;
 
-    animate background, border-color, drop-shadow-color { duration: 200ms; easing: ease; }
-
-    HorizontalLayout {
-        alignment: center;
-        Text {
-            text: root.text;
-            color: touch.has-hover ? root.tone : Palette.text-bright;
-            font-family: "Help Me";
-            font-size: 12px;
-            font-weight: 600;
-            letter-spacing: 2px;
-            vertical-alignment: center;
-            animate color { duration: 200ms; }
-        }
+    Text {
+        text: "[ " + root.text + " ]";
+        color: touch.has-hover ? Palette.bg : Palette.crt;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 
-    touch := TouchArea { }
+    touch := TouchArea { mouse-cursor: pointer; }
 }
 
-component ProgressRail inherits Rectangle {
-    in property <float> progress: 0.0;
-    height: 5px;
-    border-radius: Palette.radius;
-    background: Palette.bg-panel;
-    border-width: 1px;
-    border-color: Palette.border-idle;
-    clip: true;
-
-    Rectangle {
-        x: 1px;
-        y: 1px;
-        height: parent.height - 2px;
-        width: max(0px, (parent.width - 2px) * root.progress);
-        background: Palette.cyan;
-        drop-shadow-color: Palette.cyan.with-alpha(0.5);
-        drop-shadow-blur: 6px;
-        animate width { duration: 200ms; easing: ease; }
-    }
+component SectionLabel inherits Text {
+    in property <string> label;
+    text: "── " + root.label;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: Palette.dim;
 }
 
 component Readout inherits Rectangle {
     in property <string> text;
-    in property <color> tone: Palette.cyan;
 
-    background: Palette.bg-panel;
-    border-width: 1px;
-    border-color: Palette.border-idle;
-    border-radius: Palette.radius;
+    height: 48px;
     horizontal-stretch: 1;
-    clip: true;
+    background: Palette.bg;
+    border-width: 1px;
+    border-color: Palette.line;
 
-    HorizontalLayout {
-        Rectangle {
-            width: 3px;
-            background: root.tone;
-        }
-        VerticalLayout {
-            padding: 14px;
-            alignment: center;
-            Text {
-                text: root.text;
-                color: Palette.text-bright;
-                font-family: "Help Me";
-                font-size: 14px;
-                font-weight: 600;
-                wrap: word-wrap;
-            }
-        }
+    Text {
+        text: root.text;
+        color: Palette.crt;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
     }
 }
 
-component SectionLabel inherits Text {
-    font-family: "Help Me";
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 3px;
-    color: Palette.text-mid;
+component CrtScrollView inherits Rectangle {
+    in property <length> bar-w: 5px;
+    background: Palette.bg;
+
+    flick := Flickable {
+        width: parent.width - root.bar-w;
+        height: parent.height;
+        @children
+    }
+
+    Rectangle {
+        x: parent.width - root.bar-w;
+        width: root.bar-w;
+        height: parent.height;
+        background: Palette.faint;
+        visible: flick.content-height > flick.height;
+    }
+
+    Rectangle {
+        width: root.bar-w;
+        x: parent.width - self.width;
+        height: max(root.bar-w, root.height * root.height / max(1px, flick.content-height));
+        y: -flick.content-y * (root.height - self.height) / max(1px, flick.content-height - root.height);
+        background: Palette.crt.with-alpha(0.7);
+        visible: flick.content-height > flick.height;
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -169,7 +205,7 @@ export component MainWindow inherits Window {
     title: "OBENCHMARK";
     preferred-width: 1040px;
     preferred-height: 760px;
-    background: Palette.bg-void;
+    background: Palette.bg;
     default-font-family: "Help Me";
 
     in-out property <string> status: "idle";
@@ -189,37 +225,26 @@ export component MainWindow inherits Window {
     callback export-clicked();
     callback restart-clicked();
 
-    property <color> status-tone:
-        root.status == "error" ? Palette.rouge :
-        root.status == "running" ? Palette.cyan :
-        root.status == "showing" ? Palette.cyan : Palette.text-dim;
+    property <string> status-label:
+        root.status == "error" ? "ERREUR" :
+        root.status == "running" ? "EN COURS" :
+        root.status == "showing" ? "TERMINÉ" : "EN ATTENTE";
 
-    // Base fill
-    Rectangle { background: Palette.bg-void; }
-
-    // Grain texture overlay — renforcé pour la direction "gravure et hachures" de la v2
-    Image {
-        source: @image-url("../grain.png");
-        width: 100%;
-        height: 100%;
-        image-fit: cover;
-        opacity: 0.08;
-    }
-
-    // Faint watermark logo
-    Image {
-        source: @image-url("../icon.png");
-        opacity: 0.035;
-        image-fit: contain;
-        width: min(parent.width * 0.5, 380px);
-        height: min(parent.height * 0.5, 380px);
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+    // Cadre plein écran
+    Rectangle {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        height: parent.height - 16px;
+        border-width: 1px;
+        border-color: Palette.line;
     }
 
     VerticalLayout {
         padding: 28px;
-        spacing: 18px;
+        padding-left: 36px;
+        padding-right: 36px;
+        spacing: 16px;
 
         // ---- Header ----
         HorizontalLayout {
@@ -227,20 +252,18 @@ export component MainWindow inherits Window {
 
             VerticalLayout {
                 alignment: center;
-                Text {
+                spacing: 4px;
+                HaloText {
                     text: "OBENCHMARK";
-                    font-family: "Help Me";
                     font-size: 20px;
                     font-weight: 700;
                     letter-spacing: 4px;
-                    color: Palette.text-bright;
                 }
                 Text {
-                    text: "SYSTEM PERFORMANCE ANALYSIS";
-                    font-family: "Help Me";
+                    text: "ANALYSE DES PERFORMANCES SYSTÈME";
                     font-size: 10px;
                     letter-spacing: 2px;
-                    color: Palette.text-mid;
+                    color: Palette.dim;
                 }
             }
 
@@ -249,19 +272,19 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 alignment: center;
                 spacing: 8px;
-                StatusDot { tone: root.status-tone; pulsing: root.status == "running"; }
+                StatusLED { active: root.status == "running" || root.status == "error"; }
                 Text {
-                    text: root.status;
-                    font-family: "Help Me";
+                    text: root.status-label;
                     font-size: 11px;
                     letter-spacing: 2px;
-                    color: root.status-tone;
+                    color: Palette.crt;
                     vertical-alignment: center;
                 }
+                CrtCursor { font-size: 12px; }
             }
         }
 
-        HairlineDivider { }
+        Hairline { }
 
         // ---- Body ----
         Rectangle {
@@ -270,38 +293,34 @@ export component MainWindow inherits Window {
             // IDLE
             if root.status == "idle": VerticalLayout {
                 alignment: center;
-                spacing: 22px;
+                spacing: 20px;
 
-                Rectangle {
-                    height: 1px;
+                Text {
+                    text: "PRÊT";
+                    horizontal-alignment: center;
+                    font-size: 14px;
+                    font-weight: 700;
+                    letter-spacing: 4px;
+                    color: Palette.crt;
                 }
-
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 10px;
-                    Text {
-                        text: "READY";
-                        horizontal-alignment: center;
-                        font-family: "Help Me";
-                        font-size: 13px;
-                        letter-spacing: 3px;
-                        color: Palette.text-mid;
-                    }
-                    Text {
-                        text: "Le systeme est pret pour l'analyse.";
-                        horizontal-alignment: center;
-                        font-family: "Help Me";
-                        font-size: 13px;
-                        color: Palette.text-mid;
-                    }
+                Text {
+                    text: "Le système est prêt pour l'analyse.";
+                    horizontal-alignment: center;
+                    font-size: 13px;
+                    color: Palette.dim;
+                }
+                Text {
+                    text: "T0JNSzo6Uk1YOjpDUlQ6OjBBMEYwQTo6MzNGRjY2OjpURVJNSU5BTC1WMg==";
+                    horizontal-alignment: center;
+                    font-size: 9px;
+                    color: Palette.faint;
                 }
 
                 HorizontalLayout {
                     alignment: center;
-                    NoirButton {
-                        width: 260px;
+                    CrtButton {
+                        width: 300px;
                         text: "INITIER LE BENCHMARK";
-                        tone: Palette.cyan;
                         clicked => { root.start-clicked(); }
                     }
                 }
@@ -313,90 +332,91 @@ export component MainWindow inherits Window {
                 spacing: 18px;
 
                 SectionLabel {
-                    text: "ANALYSE EN COURS";
+                    label: "ANALYSE EN COURS";
                     horizontal-alignment: center;
                 }
 
-                Text {
+                HaloText {
                     text: root.current-test;
-                    horizontal-alignment: center;
-                    font-family: "Help Me";
                     font-size: 22px;
-                    font-weight: 600;
-                    color: Palette.text-bright;
+                    font-weight: 700;
+                    center: true;
                 }
 
                 HorizontalLayout {
                     alignment: center;
-                    Rectangle {
-                        width: min(parent.width, 480px);
-                        ProgressRail { progress: root.progress; }
+                    spacing: 3px;
+                    for i in 24: Rectangle {
+                        width: 12px;
+                        height: 14px;
+                        border-width: 1px;
+                        border-color: Palette.line;
+                        background: (i + 1) / 24.0 <= root.progress ? Palette.crt : Palette.bg;
+                        drop-shadow-color: (i + 1) / 24.0 <= root.progress ? Palette.halo : transparent;
+                        drop-shadow-blur: (i + 1) / 24.0 <= root.progress ? 6px : 0px;
                     }
                 }
 
                 Text {
                     text: "\{Math.round(root.progress * 100)}%";
                     horizontal-alignment: center;
-                    font-family: "Help Me";
                     font-size: 12px;
-                    color: Palette.cyan;
+                    color: Palette.crt;
                 }
             }
 
             // SHOWING
             if root.status == "showing": VerticalLayout {
-                spacing: 16px;
+                spacing: 14px;
 
                 HorizontalLayout {
                     spacing: 10px;
-                    Readout { text: root.final-score; tone: Palette.cyan; }
-                    Readout { text: root.cpu-score; tone: Palette.rose-dim; }
-                    Readout { text: root.mem-score; tone: Palette.rose-dim; }
-                    Readout { text: root.disk-score; tone: Palette.rose-dim; }
+                    Readout { text: root.final-score; }
+                    Readout { text: root.cpu-score; }
+                    Readout { text: root.mem-score; }
+                    Readout { text: root.disk-score; }
                 }
 
-                HairlineDivider { }
+                Hairline { }
 
-                ScrollView {
+                CrtScrollView {
                     vertical-stretch: 1;
 
                     VerticalLayout {
+                        width: 100%;
                         spacing: 0px;
 
                         SectionLabel {
-                            text: "RESULTATS DETAILLES";
+                            label: "RÉSULTATS DÉTAILLÉS";
                         }
 
                         Rectangle { height: 8px; }
 
                         for score[i] in root.scores: Rectangle {
-                            height: 34px;
-                            background: Palette.bg-void;
+                            height: 32px;
 
                             HorizontalLayout {
                                 padding-left: 4px;
                                 padding-right: 4px;
                                 Text {
                                     text: score.name;
-                                    color: Palette.text-mid;
-                                    font-family: "Help Me";
+                                    color: Palette.dim;
                                     font-size: 13px;
                                     horizontal-stretch: 2;
                                     vertical-alignment: center;
                                 }
                                 Text {
                                     text: score.value;
-                                    color: Palette.cyan;
-                                    font-family: "Help Me";
+                                    color: Palette.crt;
                                     font-size: 13px;
-                                    font-weight: 600;
+                                    font-weight: 700;
                                     horizontal-stretch: 1;
                                     horizontal-alignment: right;
                                     vertical-alignment: center;
                                 }
                             }
 
-                            HairlineDivider {
+                            Hairline {
                                 y: parent.height - 1px;
                             }
                         }
@@ -404,26 +424,23 @@ export component MainWindow inherits Window {
                         Rectangle { height: 16px; }
 
                         SectionLabel {
-                            text: "INFORMATIONS SYSTEME";
+                            label: "INFORMATIONS SYSTÈME";
                         }
 
                         Rectangle { height: 8px; }
 
                         Rectangle {
-                            background: Palette.bg-panel;
+                            background: Palette.bg;
                             border-width: 1px;
-                            border-color: Palette.border-idle;
-                            border-radius: Palette.radius;
-                            clip: true;
+                            border-color: Palette.line;
 
                             VerticalLayout {
-                                padding: 14px;
+                                padding: 12px;
                                 spacing: 4px;
 
                                 for line in root.system-info: Text {
                                     text: "> " + line.text;
-                                    color: Palette.text-mid;
-                                    font-family: "Help Me";
+                                    color: Palette.dim;
                                     font-size: 12px;
                                     wrap: word-wrap;
                                 }
@@ -434,18 +451,16 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                HairlineDivider { }
+                Hairline { }
 
                 HorizontalLayout {
                     spacing: 10px;
-                    NoirButton {
+                    CrtButton {
                         text: "EXPORTER JSON";
-                        tone: Palette.cyan;
                         clicked => { root.export-clicked(); }
                     }
-                    NoirButton {
+                    CrtButton {
                         text: "NOUVELLE ANALYSE";
-                        tone: Palette.rouge;
                         clicked => { root.restart-clicked(); }
                     }
                 }
@@ -460,11 +475,11 @@ export component MainWindow inherits Window {
                     alignment: center;
                     Rectangle {
                         width: min(parent.width * 0.8, 520px);
-                        background: Palette.bg-panel;
+                        background: Palette.bg;
                         border-width: 1px;
-                        border-color: Palette.rouge-dim;
-                        border-radius: Palette.radius;
-                        clip: true;
+                        border-color: Palette.crt;
+                        drop-shadow-color: Palette.halo;
+                        drop-shadow-blur: 6px;
 
                         VerticalLayout {
                             padding: 20px;
@@ -472,21 +487,20 @@ export component MainWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                StatusDot { tone: Palette.rouge; }
+                                StatusLED { active: true; }
                                 Text {
-                                    text: "ERREUR SYSTEME";
-                                    font-family: "Help Me";
+                                    text: "!! ERREUR SYSTÈME";
                                     font-size: 12px;
+                                    font-weight: 700;
                                     letter-spacing: 3px;
-                                    color: Palette.rouge;
+                                    color: Palette.crt;
                                     vertical-alignment: center;
                                 }
                             }
 
                             Text {
                                 text: root.error-message;
-                                color: Palette.text-mid;
-                                font-family: "Help Me";
+                                color: Palette.dim;
                                 font-size: 13px;
                                 wrap: word-wrap;
                             }
