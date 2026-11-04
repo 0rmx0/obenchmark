@@ -55,7 +55,7 @@ jobs:
         run: |
           cargo run --release -- cli --quick --export /tmp/obenchmark-smoke.json
           test -s /tmp/obenchmark-smoke.json
-          cargo run --release -- cli history
+          cargo run --release -- history
 
   build:
     name: Build (${{ matrix.artifact }})
