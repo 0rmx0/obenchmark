@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-04
 
 ### Fixed
 - Final score cap is now 99 999 (5 digits) and per-benchmark cap 10 000, matching the documented scoring.
