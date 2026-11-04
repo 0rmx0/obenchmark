@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use std::hint::black_box;
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use flate2::{write::ZlibEncoder, Compression};
@@ -10,8 +10,8 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 use crate::engines::benchmark::Benchmark;
+use crate::util::config::{bench_duration, tick_progress};
 
-const CPU_BENCH_DURATION: Duration = Duration::from_secs(5);
 const MIN_ELAPSED_SEC: f64 = 1e-6;
 
 // multi-core generic loop
@@ -21,17 +21,14 @@ impl Benchmark for CpuMultiCore {
         "CPU Multi-Core"
     }
 
-    fn weight(&self) -> u64 {
-        3
-    }
-
     fn run(&self) -> Result<u64> {
+        let duration = bench_duration();
         let start = Instant::now();
         let mut iterations: u64 = 0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             (0u64..1_000_000).into_par_iter().for_each(|i| {
-                // Mélange entier relativement coûteux et difficile à optimiser.
+                // Relatively costly integer mix, hard to optimize away.
                 let v = i
                     .wrapping_mul(6364136223846793005)
                     .wrapping_add(1)
@@ -46,24 +43,21 @@ impl Benchmark for CpuMultiCore {
     }
 }
 
-// 1. math entier
+// 1. integer math
 pub struct CpuIntMath;
 impl Benchmark for CpuIntMath {
     fn name(&self) -> &str {
         "CPU Int Math"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
+        let duration = bench_duration();
         let start = Instant::now();
         let mut x: u64 = 1;
         let mut count: u64 = 0;
         let mut acc: u64 = 0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             x = x.wrapping_mul(123456789).wrapping_add(987654321);
             x = x.wrapping_sub(54321);
             x ^= x.rotate_left(13);
@@ -77,26 +71,27 @@ impl Benchmark for CpuIntMath {
     }
 }
 
-// 2. math flottante
+// 2. floating point math
 pub struct CpuFloatMath;
 impl Benchmark for CpuFloatMath {
     fn name(&self) -> &str {
         "CPU Float Math"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
+        let duration = bench_duration();
         let start = Instant::now();
         let mut x: f64 = 1.0;
         let mut count: u64 = 0;
         let mut acc: f64 = 0.0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             x = x.mul_add(1.000_000_1, 0.000_000_1);
             x = (x.sin() + x.cos()).tan();
+            // Keep the value finite: tan() diverges near its poles.
+            if !x.is_finite() {
+                x = 1.0;
+            }
             acc += x;
             count += 1;
         }
@@ -107,25 +102,22 @@ impl Benchmark for CpuFloatMath {
     }
 }
 
-// 3. calcul des nombres premiers
+// 3. prime counting
 pub struct CpuPrimeCalc;
 impl Benchmark for CpuPrimeCalc {
     fn name(&self) -> &str {
         "CPU Prime Calc"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
-        let mut count = 0;
+        let duration = bench_duration();
         let start = Instant::now();
-        let mut n = 2;
-        while start.elapsed() < CPU_BENCH_DURATION {
+        let mut count = 0u64;
+        let mut n = 2u64;
+        while tick_progress(&start, duration) {
             let mut is_prime = true;
             for i in 2..((n as f64).sqrt() as u64 + 1) {
-                if n % i == 0 {
+                if n.is_multiple_of(i) {
                     is_prime = false;
                     break;
                 }
@@ -136,29 +128,30 @@ impl Benchmark for CpuPrimeCalc {
             n += 1;
         }
         black_box(count);
-        Ok(count)
+        let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
+        // Return primes per second, not a raw 5s count.
+        Ok((count as f64 / elapsed) as u64)
     }
 }
 
-// 4. instructions étendues (simulated via vector ops)
+// 4. vector ops (simulated SIMD)
 pub struct CpuSSE;
 impl Benchmark for CpuSSE {
     fn name(&self) -> &str {
         "CPU SSE Ext"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
         let mut a = vec![1f32; 1_000_000];
         let b = vec![2f32; 1_000_000];
+        let duration = bench_duration();
         let start = Instant::now();
         let mut count: u64 = 0;
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             for i in 0..a.len() {
-                a[i] = a[i] + b[i];
+                // Damped update: stays finite over thousands of passes
+                // (a plain += would overflow to inf/NaN).
+                a[i] = a[i] * 0.5 + b[i];
             }
             count += 1;
         }
@@ -180,16 +173,16 @@ impl Benchmark for CpuCompression {
         "CPU Compression"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
-        let data = vec![0u8; 10_000_000];
+        // Pseudo-random (but reproducible) input: compressing 10 MiB of
+        // zeros only measures the trivial case.
+        let mut rng = StdRng::seed_from_u64(42);
+        let data: Vec<u8> = (0..10_000_000).map(|_| rng.gen::<u8>()).collect();
+        let duration = bench_duration();
         let start = Instant::now();
         let mut total_bytes: u64 = 0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(&data)?;
             let compressed = encoder.finish()?;
@@ -203,24 +196,21 @@ impl Benchmark for CpuCompression {
     }
 }
 
-// 6. cryptage (SHA256 loop)
+// 6. hashing (SHA-256 loop)
 pub struct CpuEncryption;
 impl Benchmark for CpuEncryption {
     fn name(&self) -> &str {
         "CPU Encryption"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
         let data = vec![0u8; 1024 * 1024];
         let mut hasher = Sha256::new();
+        let duration = bench_duration();
         let start = Instant::now();
         let mut total_bytes: u64 = 0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             hasher.update(&data);
             let digest = hasher.finalize_reset();
             black_box(digest);
@@ -233,25 +223,22 @@ impl Benchmark for CpuEncryption {
     }
 }
 
-// 7. simulation physique simple
+// 7. simple physics simulation
 pub struct CpuPhysics;
 impl Benchmark for CpuPhysics {
     fn name(&self) -> &str {
         "CPU Physics"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
         let mut pos = vec![0f64; 100000];
         let vel = vec![1f64; 100000];
+        let duration = bench_duration();
         let start = Instant::now();
         let mut count: u64 = 0;
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             for i in 0..pos.len() {
-                pos[i] += vel[i];
+                pos[i] = (pos[i] + vel[i]) % 1.0e9; // bounded: no overflow
             }
             count += 1;
         }
@@ -266,23 +253,20 @@ impl Benchmark for CpuPhysics {
     }
 }
 
-// 8. tri
+// 8. sorting
 pub struct CpuSorting;
 impl Benchmark for CpuSorting {
     fn name(&self) -> &str {
         "CPU Sorting"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
         let mut rng = StdRng::seed_from_u64(123);
+        let duration = bench_duration();
         let start = Instant::now();
         let mut total_items: u64 = 0;
 
-        while start.elapsed() < CPU_BENCH_DURATION {
+        while tick_progress(&start, duration) {
             let mut v: Vec<u64> = (0..1_000_000).map(|_| rng.gen()).collect();
             v.sort();
             black_box(&v[0..std::cmp::min(16, v.len())]);
@@ -295,25 +279,22 @@ impl Benchmark for CpuSorting {
     }
 }
 
-// 9. uct single thread (dummy loop)
+// 9. single-thread UCT-style loop
 pub struct CpuUCT;
 impl Benchmark for CpuUCT {
     fn name(&self) -> &str {
         "CPU UCT Single"
     }
 
-    fn weight(&self) -> u64 {
-        2
-    }
-
     fn run(&self) -> Result<u64> {
+        let duration = bench_duration();
         let start = Instant::now();
         let mut rng = StdRng::seed_from_u64(0xC0FFEE);
         let mut count: u64 = 0;
         let mut value_acc: f64 = 0.0;
 
-        // Petite simulation de Monte-Carlo / UCT très simplifiée.
-        while start.elapsed() < CPU_BENCH_DURATION {
+        // Simplified Monte-Carlo / UCT simulation.
+        while tick_progress(&start, duration) {
             let mut visits = 1.0;
             let mut total_value = 0.0;
 
@@ -328,6 +309,8 @@ impl Benchmark for CpuUCT {
         }
 
         black_box(value_acc);
-        Ok(count)
+        let elapsed = start.elapsed().as_secs_f64().max(MIN_ELAPSED_SEC);
+        // Operations per second, not a raw count.
+        Ok((count as f64 / elapsed) as u64)
     }
 }
