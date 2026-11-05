@@ -1,4 +1,4 @@
-import "../ui/fonts/HelpMe.ttf";
+import "fonts/HelpMe.ttf";
 // Police de marque R_M_X. Nom de famille embarqué dans le fichier : "Help Me"
 // (avec un espace) — c'est ce nom exact qu'il faut utiliser ci-dessous.
 
@@ -9,6 +9,11 @@ export struct ScoreRow {
 
 export struct InfoLine {
     text: string,
+}
+
+export struct BenchToggle {
+    name: string,
+    checked: bool,
 }
 
 // ---------------------------------------------------------------------
@@ -198,13 +203,46 @@ component CrtScrollView inherits Rectangle {
     }
 }
 
+component BenchRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    callback toggled(bool);
+
+    height: 26px;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        spacing: 8px;
+        Text {
+            text: root.checked ? "[X]" : "[ ]";
+            color: Palette.crt;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            color: root.checked ? Palette.crt : Palette.dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+
+    Hairline { y: parent.height - 1px; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.checked); }
+    }
+}
+
 // ---------------------------------------------------------------------
 // Main window
 // ---------------------------------------------------------------------
 export component MainWindow inherits Window {
     title: "OBENCHMARK";
     preferred-width: 1040px;
-    preferred-height: 760px;
+    preferred-height: 800px;
     background: Palette.bg;
     default-font-family: "Help Me";
 
@@ -212,6 +250,7 @@ export component MainWindow inherits Window {
     in-out property <string> current-test: "";
     in-out property <float> progress: 0.0;
     in-out property <string> error-message: "";
+    in-out property <string> last-result: "";
 
     in-out property <string> final-score: "";
     in-out property <string> cpu-score: "";
@@ -220,10 +259,17 @@ export component MainWindow inherits Window {
 
     in-out property <[ScoreRow]> scores: [];
     in-out property <[InfoLine]> system-info: [];
+    in-out property <[string]> error-lines: [];
+    in-out property <[BenchToggle]> bench-list: [];
+    in-out property <string> export-path: "";
 
     callback start-clicked();
     callback export-clicked();
+    callback export-html-clicked();
     callback restart-clicked();
+    callback bench-toggled(string, bool);
+    callback select-all-clicked();
+    callback select-none-clicked();
 
     property <string> status-label:
         root.status == "error" ? "ERREUR" :
@@ -293,7 +339,7 @@ export component MainWindow inherits Window {
             // IDLE
             if root.status == "idle": VerticalLayout {
                 alignment: center;
-                spacing: 20px;
+                spacing: 16px;
 
                 Text {
                     text: "PRÊT";
@@ -316,11 +362,52 @@ export component MainWindow inherits Window {
                     color: Palette.faint;
                 }
 
+                SectionLabel {
+                    label: "BENCHMARKS À EXÉCUTER";
+                    horizontal-alignment: center;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    CrtButton {
+                        width: 110px;
+                        text: "TOUT";
+                        clicked => { root.select-all-clicked(); }
+                    }
+                    CrtButton {
+                        width: 110px;
+                        text: "AUCUN";
+                        clicked => { root.select-none-clicked(); }
+                    }
+                }
+
+                Rectangle {
+                    width: min(parent.width, 640px);
+                    height: 180px;
+                    background: Palette.bg;
+                    border-width: 1px;
+                    border-color: Palette.line;
+                    clip: true;
+
+                    CrtScrollView {
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 0px;
+                            for b in root.bench-list: BenchRow {
+                                label: b.name;
+                                checked: b.checked;
+                                toggled(v) => { root.bench-toggled(b.name, v); }
+                            }
+                        }
+                    }
+                }
+
                 HorizontalLayout {
                     alignment: center;
                     CrtButton {
                         width: 300px;
-                        text: "INITIER LE BENCHMARK";
+                        text: "LANCER LE BENCHMARK";
                         clicked => { root.start-clicked(); }
                     }
                 }
@@ -363,6 +450,13 @@ export component MainWindow inherits Window {
                     font-size: 12px;
                     color: Palette.crt;
                 }
+
+                if root.last-result != "": Text {
+                    text: root.last-result;
+                    horizontal-alignment: center;
+                    font-size: 11px;
+                    color: Palette.dim;
+                }
             }
 
             // SHOWING
@@ -385,6 +479,28 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         width: 100%;
                         spacing: 0px;
+
+                        if root.error-lines.length > 0: VerticalLayout {
+                            spacing: 4px;
+                            SectionLabel { label: "ERREURS"; }
+                            Rectangle {
+                                background: Palette.bg;
+                                border-width: 1px;
+                                border-color: Palette.line;
+                                clip: true;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 2px;
+                                    for e in root.error-lines: Text {
+                                        text: "! " + e;
+                                        color: Palette.crt;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            Rectangle { height: 8px; }
+                        }
 
                         SectionLabel {
                             label: "RÉSULTATS DÉTAILLÉS";
@@ -453,11 +569,22 @@ export component MainWindow inherits Window {
 
                 Hairline { }
 
+                if root.export-path != "": Text {
+                    text: root.export-path;
+                    horizontal-alignment: center;
+                    font-size: 11px;
+                    color: Palette.crt;
+                }
+
                 HorizontalLayout {
                     spacing: 10px;
                     CrtButton {
                         text: "EXPORTER JSON";
                         clicked => { root.export-clicked(); }
+                    }
+                    CrtButton {
+                        text: "EXPORTER HTML";
+                        clicked => { root.export-html-clicked(); }
                     }
                     CrtButton {
                         text: "NOUVELLE ANALYSE";

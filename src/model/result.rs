@@ -17,6 +17,12 @@ pub struct BenchResult {
     pub mem_score: u64,
     #[serde(default)]
     pub disk_score: u64,
+    /// Benchmarks that failed during the run (run continues without them).
+    #[serde(default)]
+    pub errors: Vec<String>,
+    /// RFC 3339 timestamp of the run.
+    #[serde(default)]
+    pub timestamp: Option<String>,
     pub system_info: Option<SystemInfo>,
 }
 
@@ -27,6 +33,8 @@ pub struct CpuInfo {
     pub cores_logical: usize,
     pub cores_physical: Option<usize>,
     pub frequency_mhz: Option<u64>,
+    #[serde(default)]
+    pub cpu_temp_c: Option<f32>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -77,10 +85,10 @@ mod tests {
             raw_score: 1000,
             weight: 2,
         };
-        
+
         let json = serde_json::to_string(&score).unwrap();
         let deserialized: BenchScore = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.name, "CPU Multi-Core");
         assert_eq!(deserialized.raw_score, 1000);
         assert_eq!(deserialized.weight, 2);
@@ -105,17 +113,39 @@ mod tests {
             cpu_score: 1000,
             mem_score: 2000,
             disk_score: 0,
+            errors: vec![],
+            timestamp: Some("2025-01-01T00:00:00+00:00".to_string()),
             system_info: None,
         };
-        
+
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: BenchResult = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.final_score, 1500);
         assert_eq!(deserialized.cpu_score, 1000);
         assert_eq!(deserialized.mem_score, 2000);
         assert_eq!(deserialized.disk_score, 0);
         assert_eq!(deserialized.scores.len(), 2);
+        assert_eq!(
+            deserialized.timestamp.as_deref(),
+            Some("2025-01-01T00:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn bench_result_deserializes_legacy_json_without_new_fields() {
+        // Old exports (v0.3.0) have no errors/timestamp: they must still load.
+        let legacy = r#"{
+            "scores": [],
+            "final_score": 1000,
+            "cpu_score": 1000,
+            "mem_score": 1000,
+            "disk_score": 1000,
+            "system_info": null
+        }"#;
+        let deserialized: BenchResult = serde_json::from_str(legacy).unwrap();
+        assert!(deserialized.errors.is_empty());
+        assert!(deserialized.timestamp.is_none());
     }
 
     #[test]
@@ -126,16 +156,18 @@ mod tests {
             cores_logical: 8,
             cores_physical: Some(4),
             frequency_mhz: Some(2800),
+            cpu_temp_c: Some(55.5),
         };
-        
+
         let json = serde_json::to_string(&cpu).unwrap();
         let deserialized: CpuInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.vendor, Some("Intel".to_string()));
         assert_eq!(deserialized.model, Some("Core i7-1185G7".to_string()));
         assert_eq!(deserialized.cores_logical, 8);
         assert_eq!(deserialized.cores_physical, Some(4));
         assert_eq!(deserialized.frequency_mhz, Some(2800));
+        assert_eq!(deserialized.cpu_temp_c, Some(55.5));
     }
 
     #[test]
@@ -143,20 +175,18 @@ mod tests {
         let ram = RamInfo {
             total_mb: 16384,
             ram_type: Some("DDR4".to_string()),
-            modules: vec![
-                MemoryModule {
-                    vendor: Some("Samsung".to_string()),
-                    part_number: Some("M471A1K43DB1".to_string()),
-                    size_mb: Some(8192),
-                    memory_type: Some("DDR4".to_string()),
-                },
-            ],
+            modules: vec![MemoryModule {
+                vendor: Some("Samsung".to_string()),
+                part_number: Some("M471A1K43DB1".to_string()),
+                size_mb: Some(8192),
+                memory_type: Some("DDR4".to_string()),
+            }],
             total_readable: Some("16.00 GB".to_string()),
         };
-        
+
         let json = serde_json::to_string(&ram).unwrap();
         let deserialized: RamInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.total_mb, 16384);
         assert_eq!(deserialized.ram_type, Some("DDR4".to_string()));
         assert_eq!(deserialized.modules.len(), 1);
@@ -173,10 +203,10 @@ mod tests {
             total_bytes: Some(500_000_000_000),
             size_readable: Some("465.76 GB".to_string()),
         };
-        
+
         let json = serde_json::to_string(&disk).unwrap();
         let deserialized: DiskInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.name, "/dev/sda");
         assert_eq!(deserialized.vendor, Some("Samsung".to_string()));
         assert_eq!(deserialized.disk_type, Some("SSD".to_string()));
@@ -189,10 +219,10 @@ mod tests {
             ram: RamInfo::default(),
             disks: vec![DiskInfo::default()],
         };
-        
+
         let json = serde_json::to_string(&system).unwrap();
         let deserialized: SystemInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert!(deserialized.disks.len() == 1);
     }
 
@@ -204,6 +234,8 @@ mod tests {
             cpu_score: 1000,
             mem_score: 1000,
             disk_score: 1000,
+            errors: vec![],
+            timestamp: None,
             system_info: Some(SystemInfo {
                 cpu: CpuInfo {
                     vendor: Some("Intel".to_string()),
@@ -211,6 +243,7 @@ mod tests {
                     cores_logical: 4,
                     cores_physical: Some(2),
                     frequency_mhz: Some(2000),
+                    cpu_temp_c: None,
                 },
                 ram: RamInfo {
                     total_mb: 8192,
@@ -218,25 +251,23 @@ mod tests {
                     modules: vec![],
                     total_readable: Some("8.00 GB".to_string()),
                 },
-                disks: vec![
-                    DiskInfo {
-                        name: "/dev/sda".to_string(),
-                        vendor: Some("Test".to_string()),
-                        model: Some("Test".to_string()),
-                        disk_type: Some("HDD".to_string()),
-                        mount_point: Some("/".to_string()),
-                        total_bytes: Some(100_000_000_000),
-                        size_readable: Some("93.13 GB".to_string()),
-                    },
-                ],
+                disks: vec![DiskInfo {
+                    name: "/dev/sda".to_string(),
+                    vendor: Some("Test".to_string()),
+                    model: Some("Test".to_string()),
+                    disk_type: Some("HDD".to_string()),
+                    mount_point: Some("/".to_string()),
+                    total_bytes: Some(100_000_000_000),
+                    size_readable: Some("93.13 GB".to_string()),
+                }],
             }),
         };
-        
+
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("Test"));
         assert!(json.contains("Intel"));
         assert!(json.contains("DDR3"));
-        
+
         let deserialized: BenchResult = serde_json::from_str(&json).unwrap();
         assert!(deserialized.system_info.is_some());
         assert_eq!(deserialized.system_info.as_ref().unwrap().disks.len(), 1);
@@ -257,5 +288,6 @@ mod tests {
         assert!(cpu.vendor.is_none());
         assert!(cpu.model.is_none());
         assert!(cpu.frequency_mhz.is_none());
+        assert!(cpu.cpu_temp_c.is_none());
     }
 }

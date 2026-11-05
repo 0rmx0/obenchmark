@@ -9,12 +9,54 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 env:
   BINARY_NAME: obenchmark
   CARGO_TERM_COLOR: always
 
 jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
+            libwayland-dev libxkbcommon-dev \
+            libudev-dev \
+            libvulkan-dev \
+            libfontconfig1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all-targets
+
+      # Smoke run: every benchmark executes end-to-end in quick mode.
+      - name: CLI smoke run (--quick)
+        run: |
+          cargo run --release -- cli --quick --export /tmp/obenchmark-smoke.json
+          test -s /tmp/obenchmark-smoke.json
+          cargo run --release -- history
+
   build:
     name: Build (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}
