@@ -2,11 +2,41 @@ use crate::engines::benchmark::bench_meta;
 use crate::model::result::BenchResult;
 use crate::util::format::human_bytes;
 
+// Police HelpMe embarquée : le rapport HTML reste autonome (aucun asset externe).
+const HELPME_TTF: &[u8] = include_bytes!("../../ui/fonts/HelpMe.ttf");
+
+// Couche cachée : ligne base64 affichée telle quelle, jamais décodée à l'écran.
+const HIDDEN_LAYER: &[u8] = b"OBM::RMX::CRT::0A0F0A::33FF66::TERMINAL-V2";
+
 fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18 & 63) as usize] as char);
+        out.push(ALPHABET[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 fn score_bar(value: u64, max: u64) -> String {
@@ -15,42 +45,48 @@ fn score_bar(value: u64, max: u64) -> String {
     } else {
         (value as f64 / max as f64 * 100.0).min(100.0)
     };
+    let filled = ((pct / 100.0) * 20.0).round() as usize;
     format!(
-        "<div class=\"bar\"><div class=\"fill\" style=\"width:{:.1}%\"></div></div>",
+        "[{}{}] {:.1}%",
+        "█".repeat(filled),
+        "░".repeat(20 - filled),
         pct
     )
 }
 
-/// Render a self-contained HTML report (inline CSS, no external assets).
+/// Render a self-contained HTML report as an R_M_X terminal screen
+/// (charte Terminal v2 : un seul <pre> plein écran, CSS inline, aucun JS).
 pub fn render_html(result: &BenchResult) -> String {
+    let sep = "─".repeat(56);
+
     let mut rows = String::new();
     for s in &result.scores {
         let meta = bench_meta(&s.name);
         rows.push_str(&format!(
-            "<tr><td>{}</td><td class=\"num\">{} {}</td><td class=\"num\">{}</td></tr>",
+            "{:<34}{:>12} {:<14}(poids {})\n",
             escape_html(&s.name),
             s.raw_score,
-            meta.unit,
+            escape_html(meta.unit),
             s.weight
         ));
     }
 
     let mut errors = String::new();
     for e in &result.errors {
-        errors.push_str(&format!("<li>{}</li>", escape_html(e)));
+        errors.push_str(&format!("! {}\n", escape_html(e)));
     }
-    let errors_html = if errors.is_empty() {
+    let errors_section = if errors.is_empty() {
         String::new()
     } else {
-        format!("<h2>Errors</h2><ul class=\"errors\">{}</ul>", errors)
+        format!("\n=== ERREURS ===\n{}", errors)
     };
 
     let mut sys = String::new();
     if let Some(si) = &result.system_info {
         sys.push_str(&format!(
-            "<li>CPU: {} {} ({} logical cores{})</li>",
-            escape_html(si.cpu.vendor.as_deref().unwrap_or("unknown")),
-            escape_html(si.cpu.model.as_deref().unwrap_or("unknown")),
+            "> CPU : {} {} ({} cœurs{})\n",
+            escape_html(si.cpu.vendor.as_deref().unwrap_or("inconnu")),
+            escape_html(si.cpu.model.as_deref().unwrap_or("inconnu")),
             si.cpu.cores_logical,
             si.cpu
                 .cpu_temp_c
@@ -58,10 +94,10 @@ pub fn render_html(result: &BenchResult) -> String {
                 .unwrap_or_default()
         ));
         if let Some(freq) = si.cpu.frequency_mhz {
-            sys.push_str(&format!("<li>Frequency: {} MHz</li>", freq));
+            sys.push_str(&format!("> Fréquence : {} MHz\n", freq));
         }
         sys.push_str(&format!(
-            "<li>RAM: {} MB{}</li>",
+            "> RAM : {} MB{}\n",
             si.ram.total_mb,
             si.ram
                 .ram_type
@@ -75,10 +111,10 @@ pub fn render_html(result: &BenchResult) -> String {
                 .clone()
                 .unwrap_or_else(|| human_bytes(d.total_bytes.unwrap_or(0) as f64));
             sys.push_str(&format!(
-                "<li>Disk: {} {} [{}] — {}</li>",
-                escape_html(d.vendor.as_deref().unwrap_or("unknown")),
-                escape_html(d.model.as_deref().unwrap_or("unknown")),
-                escape_html(d.disk_type.as_deref().unwrap_or("unknown")),
+                "> Disque : {} {} [{}] — {}\n",
+                escape_html(d.vendor.as_deref().unwrap_or("inconnu")),
+                escape_html(d.model.as_deref().unwrap_or("inconnu")),
+                escape_html(d.disk_type.as_deref().unwrap_or("inconnu")),
                 escape_html(&size)
             ));
         }
@@ -87,53 +123,32 @@ pub fn render_html(result: &BenchResult) -> String {
     let timestamp = result
         .timestamp
         .clone()
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or_else(|| "inconnu".to_string());
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>OBenchmark report</title>
-<style>
-body {{ background:#050505; color:#f5f2ea; font-family:monospace; margin:2em auto; max-width:900px; padding:0 1em; }}
-h1 {{ letter-spacing:4px; color:#7af9ff; }}
-h2 {{ color:#b3afa4; font-size:1em; letter-spacing:2px; border-bottom:1px solid #232323; padding-bottom:4px; }}
-.cards {{ display:flex; gap:1em; flex-wrap:wrap; margin:1em 0; }}
-.card {{ background:#111; border:1px solid #232323; padding:1em 1.5em; min-width:140px; }}
-.card .v {{ font-size:1.6em; color:#7af9ff; }}
-.bar {{ background:#111; border:1px solid #232323; height:8px; margin-top:6px; }}
-.fill {{ background:#7af9ff; height:100%; }}
-table {{ width:100%; border-collapse:collapse; margin:1em 0; }}
-td {{ border-bottom:1px solid #1c1c1c; padding:6px 4px; }}
-td.num {{ text-align:right; color:#7af9ff; }}
-ul {{ list-style:none; padding-left:0; }}
-li {{ padding:2px 0; color:#b3afa4; }}
-.errors li {{ color:#ff7a92; }}
-.meta {{ color:#6e6b64; font-size:0.85em; }}
-</style>
-</head>
-<body>
-<h1>OBENCHMARK</h1>
-<p class="meta">Report generated {} — final score {}</p>
-<div class="cards">
-<div class="card"><div>Global</div><div class="v">{}</div>{}</div>
-<div class="card"><div>CPU</div><div class="v">{}</div>{}</div>
-<div class="card"><div>RAM</div><div class="v">{}</div>{}</div>
-<div class="card"><div>Disk</div><div class="v">{}</div>{}</div>
-</div>
-<h2>Detailed results</h2>
-<table>
-<tr><td>Benchmark</td><td class="num">Raw</td><td class="num">Weight</td></tr>
-{}
-</table>
-<h2>System information</h2>
-<ul>{}</ul>
-{}
-</body>
-</html>"#,
+    let body = format!(
+        "=== OBENCHMARK ===\n\
+         {}\n\
+         \n\
+         Rapport généré le : {}\n\
+         Score final : {}/99999 {}\n\
+         \n\
+         === SCORES ===\n\
+         Score global : {} {}\n\
+         Score CPU    : {} {}\n\
+         Score RAM    : {} {}\n\
+         Score Disque : {} {}\n\
+         \n\
+         === RÉSULTATS DÉTAILLÉS ===\n\
+         {:<34}{:>12} {:<14}(poids)\n\
+         {rows}\n\
+         \n\
+         === INFORMATIONS SYSTÈME ===\n\
+         {sys}{errors_section}\n\
+         {}\n",
+        sep,
         escape_html(&timestamp),
         result.final_score,
+        score_bar(result.final_score, 99_999),
         result.final_score,
         score_bar(result.final_score, 99_999),
         result.cpu_score,
@@ -142,9 +157,34 @@ li {{ padding:2px 0; color:#b3afa4; }}
         score_bar(result.mem_score, 99_999),
         result.disk_score,
         score_bar(result.disk_score, 99_999),
-        rows,
-        sys,
-        errors_html
+        "BENCHMARK",
+        "RAW",
+        "UNITÉ",
+        base64_encode(HIDDEN_LAYER)
+    );
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>OBENCHMARK — RAPPORT</title>
+<style>
+@font-face {{ font-family: 'HelpMe'; src: url(data:font/ttf;base64,{font_b64}) format('truetype'); font-weight: normal; font-style: normal; }}
+:root {{ --fond: #0a0f0a; --texte: #33ff66; --halo: 0 0 6px rgba(51, 255, 102, 0.55); --taille: clamp(9px, 1.55vw, 16px); }}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; height: 100%; background: var(--fond); color: var(--texte); font-family: 'HelpMe', 'Courier New', monospace; }}
+#terminal {{ position: fixed; inset: 0; margin: 0; padding: 1.2em; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; word-break: break-word; font-size: var(--taille); line-height: 1.25; text-shadow: var(--halo); outline: none; cursor: text; scrollbar-width: thin; scrollbar-color: var(--texte) var(--fond); }}
+#terminal::after {{ content: '\2588'; animation: rmx-blink 1s steps(1) infinite; }}
+@keyframes rmx-blink {{ 50% {{ opacity: 0; }} }}
+</style>
+</head>
+<body>
+<pre id="terminal">{body}</pre>
+</body>
+</html>"#,
+        font_b64 = base64_encode(HELPME_TTF),
+        body = body
     )
 }
 
@@ -162,7 +202,14 @@ mod tests {
     }
 
     #[test]
-    fn render_html_contains_scores_and_escapes() {
+    fn base64_encode_matches_rfc4648() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+        assert_eq!(base64_encode(b"R_M_X"), "Ul9NX1g=");
+    }
+
+    #[test]
+    fn render_html_is_a_terminal_screen() {
         let result = BenchResult {
             scores: vec![BenchScore {
                 name: "<b>CPU</b>".to_string(),
@@ -178,10 +225,17 @@ mod tests {
             system_info: None,
         };
         let html = render_html(&result);
+        assert!(html.contains("<html lang=\"fr\">"));
+        assert!(html.contains("<pre id=\"terminal\">"));
+        assert!(html.contains("#0a0f0a"));
+        assert!(html.contains("#33ff66"));
+        assert!(html.contains("data:font/ttf;base64,"));
+        assert!(html.contains("Score final : 1000"));
         assert!(html.contains("&lt;b&gt;CPU&lt;/b&gt;"));
         assert!(html.contains("disk &lt;failed&gt;"));
-        assert!(html.contains("final score 1000"));
         assert!(!html.contains("<b>CPU</b>"));
+        assert!(!html.contains("<script"));
+        assert!(html.contains(&base64_encode(HIDDEN_LAYER)));
     }
 
     #[test]

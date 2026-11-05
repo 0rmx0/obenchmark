@@ -236,30 +236,6 @@ pub fn run_gui() -> Result<(), slint::PlatformError> {
         });
     }
 
-    {
-        let ui_weak = ui.as_weak();
-        ui.on_toggle_locale(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                let next = if ui.get_locale().as_str() == "fr" {
-                    "en"
-                } else {
-                    "fr"
-                };
-                ui.set_locale(SharedString::from(next));
-            }
-        });
-    }
-
-    {
-        let ui_weak = ui.as_weak();
-        ui.on_toggle_theme(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                let dark = ui.get_dark();
-                ui.set_dark(!dark);
-            }
-        });
-    }
-
     apply_state_to_ui(&ui, &state.borrow());
     ui.run()
 }

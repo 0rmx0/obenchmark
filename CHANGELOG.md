@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- GUI Slint entièrement en charte Terminal R_M_X v2 : fond `#0A0F0A`, vert CRT `#33FF66` (seule teinte), halo `rgba(51,255,102,0.55)`, curseur `█` clignotant (seul mouvement autorisé), boutons `[ ACTION ]`, progression en 24 blocs, scrollbar fine verte, libellés 100 % français et couche cachée base64 affichée telle quelle. Les bascules thème clair/sombre et FR/EN sont retirées du menu (fond clair interdit par la charte, français partout).
+- Rapport HTML exporté (CLI `--html` et bouton GUI « EXPORTER HTML ») refondu en écran terminal autonome : un seul `<pre>` plein écran, CSS inline aux tokens de la charte, police HelpMe embarquée en base64, curseur clignotant, libellés français, une ligne base64 cachée affichée telle quelle, aucun JavaScript.
+
 ## [0.4.0] - 2026-11-04
 
 ### Fixed

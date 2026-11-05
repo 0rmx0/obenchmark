@@ -7,10 +7,10 @@ Open-source cross-platform benchmark tool written in Rust.
 - Detailed memory tests including cached/uncached read, write, latency, availability
 - Disk I/O tests covering sequential read/write and random read/write IOPS at different depths
 - Normalized score system with per-benchmark clamping and 5‑digit final score
-- Beautiful Slint GUI dashboard with benchmark selection, live progress and result export (JSON + HTML)
-- French/English UI and dark/light theme
+- Slint GUI dashboard in the R_M_X terminal theme (CRT green #33FF66 on #0A0F0A, blinking █ cursor) with benchmark selection, live progress and result export (JSON + HTML)
+- 100 % French UI
 - Local run history with comparison between runs
-- Export results as JSON or a self-contained HTML report for later analysis
+- Export results as JSON or a self-contained HTML report rendered as an R_M_X terminal screen
 
 ## Benchmark Tests
 Each run executes a suite of individual benchmarks; results are normalized and weighted to produce a single final score (max 99999).
